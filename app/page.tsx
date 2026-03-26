@@ -41,7 +41,7 @@ export default function MainPage() {
       const { data: sales } = await supabase.from('orderitems').select('productid, quantity');
 
       const merged = products?.map(p => {
-        const locations = inv?.filter(i => (i.batches as any)?.productid === p.productid && i.quantity > 0)
+        const locations = inv?.filter(i => (i.batches as any)?.[0]?.productid === p.productid && i.quantity > 0)
           .map(i => ({ name: (i.stores as any).storename, qty: i.quantity }));
         
         const totalStock = locations?.reduce((acc, l) => acc + l.qty, 0) || 0;

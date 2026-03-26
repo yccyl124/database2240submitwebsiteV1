@@ -87,16 +87,16 @@ export default function UnifiedShoppingPage() {
         .in('batches.productid', productIds);
 
       const formatted = data.map(item => {
-        const stock = invData?.filter(inv => inv.batches?.productid === item.productid)
+        const stock = invData?.filter(inv => inv.batches?.[0]?.productid === item.productid)
                               .reduce((sum, inv) => sum + inv.quantity, 0) || 0;
-        const loc = item.products?.productlocations?.[0]?.storeshelves;
+        const loc = item.products?.[0]?.productlocations?.[0]?.storeshelves;
         return {
           wishlistId: item.wishlistid,
           productId: item.productid,
-          name: item.products?.productname,
-          price: item.products?.currentprice,
+          name: item.products?.[0]?.productname,
+          price: item.products?.[0]?.currentprice,
           stock: stock,
-          aisle: loc?.storeaisles?.aislenumber || 'N/A'
+          aisle: loc?.[0]?.storeaisles?.[0]?.aislenumber || 'N/A'
         };
       });
 

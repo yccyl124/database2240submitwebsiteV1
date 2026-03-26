@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 
 // Explicitly import the named 'StoreMap'
 const StoreMap = dynamic(
-  () => import('@/components/StoreMap').then((mod) => mod.StoreMap),
+  () => import('@/components/StoreMap'),
   { 
     ssr: false,
     loading: () => <div className="h-[500px] w-full bg-gray-50 animate-pulse rounded-[40px]" />

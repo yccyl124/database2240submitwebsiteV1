@@ -36,14 +36,15 @@ export default function WishlistPage() {
     const { data: invData } = await supabase.from('storeinventory').select('quantity, batches(productid)').in('batches.productid', productIds);
 
     const formatted = data.map(item => {
-      const stock = invData?.filter(inv => inv.batches?.productid === item.productid).reduce((sum, inv) => sum + inv.quantity, 0) || 0;
-      const loc = item.products?.productlocations?.[0]?.storeshelves;
+      const stock = invData?.filter(inv => inv.batches?.[0]?.productid === item.productid).reduce((sum, inv) => sum + inv.quantity, 0) || 0;
+      const loc = item.products?.[0]?.productlocations?.[0]?.storeshelves;
       return {
         id: item.wishlistid,
         productId: item.productid,
-        name: item.products?.productname,
+        name: item.products?.[0]?.productname,
+        price: item.products?.[0]?.currentprice,
         stock: stock,
-        aisle: loc?.storeaisles?.aislenumber || 'N/A'
+        aisle: loc?.[0]?.storeaisles?.[0]?.aislenumber || 'N/A'
       };
     });
     setWishlist(formatted);

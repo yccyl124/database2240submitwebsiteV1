@@ -55,7 +55,7 @@ export default function SearchStockPage() {
         const { data: invData } = await invQuery;
 
         const merged = productsData?.map((product: any) => {
-          const productInv = invData?.filter((inv: any) => inv.batches?.productid === product.productid) || [];
+          const productInv = invData?.filter((inv: any) => inv.batches?.[0]?.productid === product.productid) || [];
           const totalStock = productInv.reduce((sum: number, item: any) => sum + item.quantity, 0);
           const location = product.productlocations?.[0]?.storeshelves;
           

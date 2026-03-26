@@ -1,26 +1,28 @@
 @import "tailwindcss";
 
+@theme {
+  /* Fresh Organic Palette */
+  --color-brand-bg: #F7F9F7;      /* Very soft mint-white background */
+  --color-brand-primary: #41644A; /* Leafy Green (Trust & Freshness) */
+  --color-brand-accent: #89B999;  /* Soft Sage Green */
+  --color-brand-warm: #E3C770;    /* Harvest Gold (for alerts/highlights) */
+  --color-brand-deep: #263A29;    /* Dark Forest Green (for text) */
+  
+  /* 30px Smooth Edge for that "Modern App" feel */
+  --radius-smooth: 30px;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  background-color: var(--color-brand-bg);
+  color: var(--color-brand-deep);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+.custom-scrollbar::-webkit-scrollbar { width: 5px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #365314; border-radius: 10px; }
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 10px;
 }

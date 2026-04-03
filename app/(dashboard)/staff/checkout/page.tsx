@@ -9,19 +9,15 @@ export default function CheckoutPOS() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  
   const [selectedLocationId, setSelectedLocationId] = useState<number | string>(''); 
   const [locations, setLocations] = useState<any[]>([]);
-
   const [customerPhone, setCustomerPhone] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [customer, setCustomer] = useState<any>(null);
-  
   const [manualPromoCode, setManualPromoCode] = useState('');
   const [promoError, setPromoError] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<any>(null);
 
-  // UPDATED: Exact matches for your database 'paymentmethod' column
   const paymentMethods = [
     { id: 'cash', label: '💵 Cash' },
     { id: 'credit_card', label: '💳 Credit Card' },
@@ -33,123 +29,56 @@ export default function CheckoutPOS() {
   useEffect(() => {
     async function getStores() {
         const { data } = await supabase.from('locations').select('locationid, name').eq('location_type', 'store');
-        if (data) {
-            setLocations(data);
-            setSelectedLocationId(data[0]?.locationid || '');
-        }
+        if (data) { setLocations(data); setSelectedLocationId(data[0]?.locationid || ''); }
     }
     getStores();
   }, []);
 
-  const handleCancelPromo = () => {
-    setAppliedPromo(null);
-    setManualPromoCode("");
-    setPromoError("");
-    toast.success("Promo removed");
-  };
+  const handleCancelPromo = () => { setAppliedPromo(null); setManualPromoCode(""); setPromoError(""); toast.success("Promo removed"); };
 
   const handleFindCustomer = async () => {
     setPhoneError("");
     const hkRegex = /^\+852-\d{4}-\d{4}$/;
-
-    if (!customerPhone) {
-        setPhoneError("Enter phone number");
-        return;
-    }
-    if (!hkRegex.test(customerPhone)) {
-        setPhoneError("Required: +852-XXXX-XXXX");
-        return;
-    }
+    if (!customerPhone) return setPhoneError("Enter phone number");
+    if (!hkRegex.test(customerPhone)) return setPhoneError("Required: +852-XXXX-XXXX");
 
     try {
-      const { data: userData, error } = await supabase
-        .from('users')
-        .select('userid, fullname, loyalty_points')
-        .eq('phone', customerPhone.trim())
-        .single();
-
-      if (error || !userData) {
-        setPhoneError("User not found in system");
-        return;
-      }
-
+      const { data: userData, error } = await supabase.from('users').select('userid, fullname, loyalty_points').eq('phone', customerPhone.trim()).single();
+      if (error || !userData) return setPhoneError("User not found in system");
       setCustomer(userData);
       toast.success(`Member Found: ${userData.fullname}`);
-    } catch (err: any) {
-      setPhoneError("Database lookup failed");
-    }
+    } catch (err: any) { setPhoneError("Database lookup failed"); }
   };
 
   const handleApplyPromo = async () => {
     setPromoError("");
     if (!manualPromoCode) return;
-    
-    const { data, error } = await supabase
-      .from('discounts')
-      .select('value, type, discountid')
-      .eq('code', manualPromoCode.toUpperCase().trim())
-      .eq('status', 'active')
-      .maybeSingle();
-
-    if (error) {
-        setPromoError("Server connection error");
-        return;
-    }
-
-    if (data) {
-      setAppliedPromo(data);
-      toast.success(`${data.value}${data.type === 'percentage' ? '%' : '$'} Applied!`);
-    } else {
-      setPromoError("Code does not exist or expired");
-    }
+    const { data, error } = await supabase.from('discounts').select('value, type, discountid').eq('code', manualPromoCode.toUpperCase().trim()).eq('status', 'active').maybeSingle();
+    if (error) return setPromoError("Server connection error");
+    if (data) { setAppliedPromo(data); toast.success(`${data.value}${data.type === 'percentage' ? '%' : '$'} Applied!`); } 
+    else { setPromoError("Code does not exist or expired"); }
   };
 
   const searchProducts = async (query: string) => {
     setSearchQuery(query);
     if (query.trim().length < 2) return setSearchResults([]);
-
-    const { data, error } = await supabase
-      .from('products')
-      .select(`
-        productid, name, barcode, currentprice,
-        batches!inner (batchid, remainingqty, batchnumber)
-      `)
-      .or(`name.ilike.%${query}%,barcode.eq.${query}`)
-      .gt('batches.remainingqty', 0) 
-      .limit(5);
-
-    if (error) console.error(error.message);
+    const { data, error } = await supabase.from('products').select(`productid, name, barcode, currentprice, batches!inner (batchid, remainingqty, batchnumber)`).or(`name.ilike.%${query}%,barcode.eq.${query}`).gt('batches.remainingqty', 0).limit(5);
     setSearchResults(data || []);
   };
 
   const addToCart = async (product: any) => {
     const selectedBatch = product.batches[0];
     const existing = cart.find(item => item.productid === product.productid);
-    
-    if (existing) {
-      updateQty(product.productid, 1);
-    } else {
-      setCart([...cart, { 
-        productid: product.productid,
-        name: product.name,
-        currentprice: Number(product.currentprice), 
-        batchid: selectedBatch.batchid,
-        available: selectedBatch.remainingqty,
-        qty: 1 
-      }]);
-    }
-    setSearchQuery('');
-    setSearchResults([]);
+    if (existing) { updateQty(product.productid, 1); } 
+    else { setCart([...cart, { productid: product.productid, name: product.name, currentprice: Number(product.currentprice), batchid: selectedBatch.batchid, available: selectedBatch.remainingqty, qty: 1 }]); }
+    setSearchQuery(''); setSearchResults([]);
   };
 
   const updateQty = (productid: number, delta: number) => {
     setCart(prev => prev.map(item => {
       if (item.productid === productid) {
         const newQty = item.qty + delta;
-        if (newQty > item.available) {
-          toast.error("Insufficient stock");
-          return item;
-        }
+        if (newQty > item.available) { toast.error("Insufficient stock"); return item; }
         return newQty <= 0 ? null : { ...item, qty: newQty };
       }
       return item;
@@ -157,55 +86,24 @@ export default function CheckoutPOS() {
   };
 
   const subtotal = cart.reduce((sum, item) => sum + (item.currentprice * item.qty), 0);
-  const discountAmount = appliedPromo 
-    ? (appliedPromo.type === 'percentage' ? (subtotal * (Number(appliedPromo.value) / 100)) : Number(appliedPromo.value)) 
-    : 0;
+  const discountAmount = appliedPromo ? (appliedPromo.type === 'percentage' ? (subtotal * (Number(appliedPromo.value) / 100)) : Number(appliedPromo.value)) : 0;
   const total = Math.max(0, subtotal - discountAmount);
 
   const processSale = async (methodId: string) => {
     if (cart.length === 0) return;
     const staffId = localStorage.getItem('userId') || 1;
     setIsProcessing(true);
-
     try {
-      const { data: txnData, error: txnError } = await supabase
-        .from('sales_transactions')
-        .insert([{
-          transactionnumber: `TRX-${Date.now()}`,
-          locationid: parseInt(selectedLocationId.toString()), 
-          customerid: customer?.userid || null, 
-          cashierid: parseInt(staffId.toString()),    
-          paymentmethod: methodId, // Will now insert 'debit_card', 'voucher', etc.
-          totalprice: total
-        }])
-        .select().single();
-
+      const { data: txnData, error: txnError } = await supabase.from('sales_transactions').insert([{ transactionnumber: `TRX-${Date.now()}`, locationid: parseInt(selectedLocationId.toString()), customerid: customer?.userid || null, cashierid: parseInt(staffId.toString()), paymentmethod: methodId, totalprice: total }]).select().single();
       if (txnError) throw new Error(txnError.message);
-
       for (const item of cart) {
-        await supabase.from('sales_items').insert([{
-          saleid: txnData.saleid,
-          batchid: item.batchid,
-          quantity: item.qty,
-          unitprice: item.currentprice,
-          finalprice: item.currentprice * item.qty,
-          discountid: appliedPromo?.discountid || null
-        }]);
-
+        await supabase.from('sales_items').insert([{ saleid: txnData.saleid, batchid: item.batchid, quantity: item.qty, unitprice: item.currentprice, finalprice: item.currentprice * item.qty, discountid: appliedPromo?.discountid || null }]);
         await supabase.from('batches').update({ remainingqty: item.available - item.qty }).eq('batchid', item.batchid);
       }
-
-      if (customer?.userid) {
-        await supabase.from('users').update({ 
-            loyalty_points: (customer.loyalty_points || 0) + Math.floor(total) 
-        }).eq('userid', customer.userid);
-      }
-
+      if (customer?.userid) { await supabase.from('users').update({ loyalty_points: (customer.loyalty_points || 0) + Math.floor(total) }).eq('userid', customer.userid); }
       toast.success("Transaction Success");
       setCart([]); setCustomer(null); setCustomerPhone(''); setAppliedPromo(null);
-    } catch (err: any) {
-      toast.error(`Sale Failed: ${err.message}`);
-    } finally { setIsProcessing(false); }
+    } catch (err: any) { toast.error(`Sale Failed: ${err.message}`); } finally { setIsProcessing(false); }
   };
 
   return (
@@ -213,23 +111,19 @@ export default function CheckoutPOS() {
       <div className="grid grid-cols-12 gap-8">
         <div className="col-span-8 bg-white p-8 rounded-[40px] shadow-sm border border-gray-100">
           <h2 className="text-3xl font-black text-[#263A29] uppercase mb-6">Staff Checkout</h2>
-          
           <div className="relative mb-8">
             <input value={searchQuery} onChange={(e) => searchProducts(e.target.value)} placeholder="Barcode or Product Name..." className="w-full p-5 bg-gray-50 border-2 border-transparent focus:border-[#41644A] rounded-2xl outline-none font-bold text-lg" />
             {searchQuery.trim().length >= 2 && (
               <div className="absolute top-full left-0 right-0 bg-white border border-gray-100 rounded-2xl mt-2 shadow-2xl z-50 overflow-hidden">
                 {searchResults.length > 0 ? searchResults.map(p => (
                     <div key={p.productid} onClick={() => addToCart(p)} className="p-4 hover:bg-green-50 cursor-pointer flex justify-between border-b last:border-0">
-                      <div><p className="font-bold text-[#263A29]">{p.name}</p><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Available: {p.batches[0].remainingqty}</p></div>
+                      <div><p className="font-bold text-[#263A29]">{p.name}</p><p className="text-[10px] font-black text-gray-400 uppercase">Available: {p.batches[0].remainingqty}</p></div>
                       <p className="font-black text-[#41644A]">${p.currentprice}</p>
                     </div>
-                  )) : (
-                  <div className="p-10 text-center text-gray-400 font-bold uppercase text-xs italic">⚠️ Product not found</div>
-                )}
+                  )) : <div className="p-10 text-center text-gray-400 font-bold uppercase text-xs italic">⚠️ Product not found</div>}
               </div>
             )}
           </div>
-
           <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar">
             {cart.map(item => (
               <div key={item.productid} className="flex justify-between items-center p-4 bg-gray-50 rounded-[25px]">
@@ -246,7 +140,6 @@ export default function CheckoutPOS() {
             ))}
           </div>
         </div>
-
         <div className="col-span-4 space-y-4">
           <div className="bg-white p-6 rounded-[35px] border border-gray-100 shadow-sm">
             <h3 className="text-[10px] font-black uppercase text-gray-400 mb-3">Active Store</h3>
@@ -254,54 +147,23 @@ export default function CheckoutPOS() {
               {locations.map(s => <option key={s.locationid} value={s.locationid}>{s.name}</option>)}
             </select>
           </div>
-
           <div className="bg-white p-6 rounded-[35px] border border-gray-100 shadow-sm space-y-6">
             <div>
               <h3 className="text-[10px] font-black uppercase text-gray-400 mb-3">Customer Member</h3>
-              <div className="flex gap-2">
-                <input type="text" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="+852-XXXX-XXXX" className="flex-1 p-3 bg-gray-50 rounded-xl text-sm font-bold min-w-0" />
-                <button onClick={handleFindCustomer} className="bg-[#263A29] text-white px-5 py-3 rounded-xl text-xs font-black uppercase">Find</button>
-              </div>
+              <div className="flex gap-2"><input type="text" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="+852-XXXX-XXXX" className="flex-1 p-3 bg-gray-50 rounded-xl text-sm font-bold min-w-0" /><button onClick={handleFindCustomer} className="bg-[#263A29] text-white px-5 py-3 rounded-xl text-xs font-black uppercase">Find</button></div>
               {phoneError && <p className="text-[9px] text-red-500 font-black uppercase mt-2 ml-1">⚠️ {phoneError}</p>}
-              {customer && (
-                <div className="mt-4 p-4 bg-green-50 rounded-2xl border border-green-100 flex justify-between items-center">
-                  <div><p className="font-black text-[#263A29] text-sm">{customer.fullname}</p><p className="text-[10px] text-green-700 font-bold uppercase">Balance: {customer.loyalty_points} Pts</p></div>
-                  <button onClick={() => { setCustomer(null); setCustomerPhone(''); }} className="text-gray-400 hover:text-red-500 font-bold">✕</button>
-                </div>
-              )}
+              {customer && <div className="mt-4 p-4 bg-green-50 rounded-2xl border border-green-100 flex justify-between items-center"><div><p className="font-black text-[#263A29] text-sm">{customer.fullname}</p><p className="text-[10px] text-green-700 font-bold uppercase">Balance: {customer.loyalty_points} Pts</p></div><button onClick={() => { setCustomer(null); setCustomerPhone(''); }} className="text-gray-400 hover:text-red-500 font-bold">✕</button></div>}
             </div>
             <div className="w-full">
               <h3 className="text-[10px] font-black uppercase text-gray-400 mb-3">Store Promo</h3>
-              <div className="flex gap-2">
-                <input type="text" value={manualPromoCode} onChange={(e) => setManualPromoCode(e.target.value.toUpperCase())} disabled={!!appliedPromo} placeholder="CODE" className={`flex-1 p-3 bg-gray-50 rounded-xl text-sm font-bold min-w-0 ${appliedPromo ? 'text-gray-400' : ''}`} />
-                {appliedPromo ? (
-                  <button onClick={handleCancelPromo} className="bg-red-50 text-red-600 px-5 py-3 rounded-xl text-xs font-black uppercase border">Undo</button>
-                ) : (
-                  <button onClick={handleApplyPromo} className="bg-gray-100 text-[#263A29] px-5 py-3 rounded-xl text-xs font-black uppercase">Apply</button>
-                )}
-              </div>
+              <div className="flex gap-2"><input type="text" value={manualPromoCode} onChange={(e) => setManualPromoCode(e.target.value.toUpperCase())} disabled={!!appliedPromo} placeholder="CODE" className={`flex-1 p-3 bg-gray-50 rounded-xl text-sm font-bold min-w-0 ${appliedPromo ? 'text-gray-400' : ''}`} />{appliedPromo ? <button onClick={handleCancelPromo} className="bg-red-50 text-red-600 px-5 py-3 rounded-xl text-xs font-black uppercase border">Undo</button> : <button onClick={handleApplyPromo} className="bg-gray-100 text-[#263A29] px-5 py-3 rounded-xl text-xs font-black uppercase">Apply</button>}</div>
               {promoError && <p className="text-[9px] text-red-500 font-black uppercase mt-2 ml-1">⚠️ {promoError}</p>}
             </div>
           </div>
-
           <div className="bg-[#263A29] p-8 rounded-[40px] text-white shadow-2xl">
-            <div className="space-y-2 mb-6 opacity-80 text-[10px] font-black uppercase">
-              <div className="flex justify-between"><span>Subtotal</span><span>${subtotal.toFixed(2)}</span></div>
-              {appliedPromo && <div className="flex justify-between text-green-400"><span>Discount</span><span>- ${discountAmount.toFixed(2)}</span></div>}
-            </div>
-            <div className="pt-4 border-t border-white/10 mb-8">
-              <p className="text-[10px] font-black uppercase opacity-50 mb-1">Total to Pay</p>
-              <p className="text-6xl font-black tracking-tighter">${total.toFixed(2)}</p>
-            </div>
-            <div className="grid grid-cols-1 gap-2">
-              {paymentMethods.map(m => (
-                <button key={m.id} onClick={() => processSale(m.id)} disabled={isProcessing || cart.length === 0}
-                  className="w-full py-4 bg-white/5 hover:bg-white hover:text-[#263A29] border border-white/10 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all text-left pl-6 disabled:opacity-20"
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+            <div className="space-y-2 mb-6 opacity-80 text-[10px] font-black uppercase"><div className="flex justify-between"><span>Subtotal</span><span>${subtotal.toFixed(2)}</span></div>{appliedPromo && <div className="flex justify-between text-green-400"><span>Discount</span><span>- ${discountAmount.toFixed(2)}</span></div>}</div>
+            <div className="pt-4 border-t border-white/10 mb-8"><p className="text-[10px] font-black uppercase opacity-50 mb-1">Total to Pay</p><p className="text-6xl font-black tracking-tighter">${total.toFixed(2)}</p></div>
+            <div className="grid grid-cols-1 gap-2">{paymentMethods.map(m => <button key={m.id} onClick={() => processSale(m.id)} disabled={isProcessing || cart.length === 0} className="w-full py-4 bg-white/5 hover:bg-white hover:text-[#263A29] border border-white/10 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all text-left pl-6 disabled:opacity-20">{m.label}</button>)}</div>
           </div>
         </div>
       </div>

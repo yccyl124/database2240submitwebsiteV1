@@ -16,19 +16,27 @@ export default function SearchStockPage() {
   const [loading, setLoading] = useState(true);
   const [customerId, setCustomerId] = useState<number | null>(null);
 
-  // 1. INITIAL LOAD (Stores, Discounts, Local Cart)
+  // 1. INITIAL LOAD (Locations/Stores, Discounts, User ID)
   useEffect(() => {
     async function init() {
-      const { data: storeData } = await supabase.from('stores').select('storeid, storename');
+      // New: locations table where type is 'store'
+      const { data: storeData } = await supabase
+        .from('locations')
+        .select('locationid, name')
+        .eq('location_type', 'store');
       if (storeData) setStores(storeData);
 
-      const { data: discountData } = await supabase.from('discounts').select('*').eq('status', 'active').limit(1);
+      const { data: discountData } = await supabase
+        .from('discounts')
+        .select('*')
+        .eq('status', 'active')
+        .limit(1);
       if (discountData?.[0]) setActiveDiscount(discountData[0]);
 
-      const { data: user } = await supabase.from('customers').select('customerid').limit(1).single();
-      if (user) setCustomerId(user.customerid);
+      // New: users table and userid column
+      const { data: user } = await supabase.from('users').select('userid').limit(1).single();
+      if (user) setCustomerId(user.userid);
 
-      // Load saved cart from memory
       const savedCart = localStorage.getItem('active_cart');
       if (savedCart) setCart(JSON.parse(savedCart));
     }
@@ -40,37 +48,61 @@ export default function SearchStockPage() {
     localStorage.setItem('active_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // 3. FETCH INVENTORY
+  // 3. FETCH INVENTORY & LAYOUT
   useEffect(() => {
     async function fetchStoreData() {
       try {
         setLoading(true);
+
+        // Fetch basic product info and layout (aisle/shelf)
         const { data: productsData } = await supabase.from('products').select(`
-            productid, productname, currentprice, 
-            productlocations (storeshelves (shelfnumber, storeaisles (aislenumber)))
+            productid, 
+            name, 
+            currentprice,
+            store_layouts (aisle_number, shelf_number, locationid)
           `);
 
-        let invQuery = supabase.from('storeinventory').select('quantity, storeid, batches(productid)');
-        if (selectedStore !== 'ALL') invQuery = invQuery.eq('storeid', selectedStore);
+        // Fetch inventory via batches
+        let invQuery = supabase.from('inventory').select(`
+            quantity, 
+            locationid, 
+            batches!inner(productid)
+          `);
+        
+        if (selectedStore !== 'ALL') {
+          invQuery = invQuery.eq('locationid', selectedStore);
+        }
+        
         const { data: invData } = await invQuery;
 
+        // Merge logic to keep your UI variables (productname, aisle, shelf) working
         const merged = productsData?.map((product: any) => {
-          const productInv = invData?.filter((inv: any) => inv.batches?.[0]?.productid === product.productid) || [];
+          // Calculate total stock for this product across filtered locations
+          const productInv = invData?.filter((inv: any) => inv.batches?.productid === product.productid) || [];
           const totalStock = productInv.reduce((sum: number, item: any) => sum + item.quantity, 0);
-          const location = product.productlocations?.[0]?.storeshelves;
           
+          // Get layout for the specific selected store, or default to first found
+          const layout = selectedStore === 'ALL' 
+            ? product.store_layouts?.[0] 
+            : product.store_layouts?.find((l: any) => l.locationid === parseInt(selectedStore));
+
           return { 
-            ...product, 
+            ...product,
+            productname: product.name, // Map 'name' to 'productname' for your JSX
             totalStock,
-            aisle: location?.storeaisles?.aislenumber || 'N/A',
-            shelf: location?.shelfnumber || 'N/A'
+            aisle: layout?.aisle_number || 'N/A',
+            shelf: layout?.shelf_number || 'N/A'
           };
         }).filter(p => p.totalStock > 0);
 
         setProducts(merged || []);
-      } finally { setLoading(false); }
+      } catch (error) {
+        console.error("Error fetching inventory:", error);
+      } finally { 
+        setLoading(false); 
+      }
     }
-    if (stores.length > 0) fetchStoreData();
+    if (stores.length > 0 || selectedStore === 'ALL') fetchStoreData();
   }, [selectedStore, stores]);
 
   // CART LOGIC
@@ -86,7 +118,9 @@ export default function SearchStockPage() {
 
   const removeFromCart = (id: number) => setCart(cart.filter(item => item.productid !== id));
 
-  const filteredProducts = products.filter(item => item.productname?.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredProducts = products.filter(item => 
+    item.productname?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className="relative min-h-screen bg-[#FBFBFB] p-4 md:p-8">
@@ -106,7 +140,7 @@ export default function SearchStockPage() {
               {cart.map(item => (
                 <div key={item.productid} className="flex justify-between items-center bg-gray-50 p-4 rounded-2xl">
                   <div>
-                    <p className="font-bold text-[#263A29]">{item.name || item.productname}</p>
+                    <p className="font-bold text-[#263A29]">{item.productname}</p>
                     <p className="text-[10px] font-black text-[#41644A]">AISLE {item.aisle} • QTY: {item.qty}</p>
                   </div>
                   <button onClick={() => removeFromCart(item.productid)} className="text-red-400"><Trash2 size={16}/></button>
@@ -138,7 +172,6 @@ export default function SearchStockPage() {
             <p className="text-gray-400 font-bold text-xs uppercase tracking-widest">Find inventory & build your list</p>
           </div>
           
-          {/* FLOATING CART ICON */}
           <button 
             onClick={() => setIsCartOpen(true)}
             className="relative bg-white p-4 rounded-2xl shadow-xl border border-gray-100 hover:scale-105 transition-transform"
@@ -168,7 +201,7 @@ export default function SearchStockPage() {
               className="w-full h-full px-6 py-4 bg-white border border-gray-100 rounded-[30px] font-black text-[10px] uppercase tracking-widest text-[#263A29] shadow-sm outline-none cursor-pointer"
             >
               <option value="ALL">All Branches (Global Search)</option>
-              {stores.map(s => <option key={s.storeid} value={s.storeid}>{s.storename}</option>)}
+              {stores.map(s => <option key={s.locationid} value={s.locationid}>{s.name}</option>)}
             </select>
           </div>
         </div>
@@ -199,7 +232,7 @@ export default function SearchStockPage() {
                   </div>
                   <button 
                     onClick={() => addToCart(item)}
-                    className="bg-[#263A29] text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-[#41644A] active:scale-95 transition-all"
+                    className="bg-[#263A29] text-white px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-[#41644A] active:scale-95 transition-all"
                   >
                     Add to Trip
                   </button>

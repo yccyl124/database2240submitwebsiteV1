@@ -12,54 +12,50 @@ export default function CheckoutPage() {
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
+  // DISCOUNT STATES
+  const [discountInput, setDiscountInput] = useState('');
+  const [appliedDiscount, setAppliedDiscount] = useState<any | null>(null);
+
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
     phone: '',
-    storeId: '',
+    locationId: '',
   });
 
-  const [customerId, setCustomerId] = useState<number | null>(null);
+  const [userId, setUserId] = useState<number | null>(null);
 
   useEffect(() => {
     async function prepareCheckout() {
-      // 1. Load Cart
       const savedCart = localStorage.getItem('active_cart');
       if (!savedCart || JSON.parse(savedCart).length === 0) {
         toast.error("Cart is empty");
         router.push('/customer/search');
         return;
       }
-      const parsedCart = JSON.parse(savedCart);
-      setCart(parsedCart);
+      setCart(JSON.parse(savedCart));
 
-      // 2. Fetch Stores for the dropdown
-      const { data: storeData } = await supabase.from('stores').select('storeid, storename');
+      const { data: storeData } = await supabase
+        .from('locations')
+        .select('locationid, name')
+        .eq('location_type', 'store');
       setStores(storeData || []);
 
-      // 3. AUTO-FILL: Match Auth User to Public Database
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      
-      if (authUser) {
+      const storedId = localStorage.getItem('userId');
+      if (storedId) {
+        setUserId(parseInt(storedId));
         const { data: dbUser } = await supabase
           .from('users')
-          .select(`
-            fullname, email, phone, 
-            customers (customerid, preferredstoreid)
-          `)
-          .eq('email', authUser.email)
+          .select('fullname, email, phone, assigned_location_id')
+          .eq('userid', parseInt(storedId))
           .single();
 
         if (dbUser) {
-          // Access the first customer profile linked to this user
-          const customerProfile = Array.isArray(dbUser.customers) ? dbUser.customers[0] : (dbUser.customers as any);
-          
-          setCustomerId(customerProfile?.customerid || null);
           setFormData({
             fullName: dbUser.fullname || '',
             email: dbUser.email || '',
             phone: dbUser.phone || '',
-            storeId: customerProfile?.preferredstoreid?.toString() || '',
+            locationId: dbUser.assigned_location_id?.toString() || '',
           });
         }
       }
@@ -68,150 +64,159 @@ export default function CheckoutPage() {
     prepareCheckout();
   }, [router]);
 
+  const applyDiscountCode = async () => {
+    if (!discountInput) return;
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data, error } = await supabase
+      .from('discounts')
+      .select('*')
+      .eq('code', discountInput.trim())
+      .eq('status', 'active')
+      .lte('startdate', today)
+      .gte('enddate', today)
+      .single();
+
+    if (error || !data) {
+      toast.error("Invalid or expired code");
+      setAppliedDiscount(null);
+    } else {
+      setAppliedDiscount(data);
+      toast.success(`Code applied!`);
+    }
+  };
+
+  const subtotal = cart.reduce((sum, i) => sum + (i.currentprice * i.qty), 0);
+  let discountAmount = 0;
+  if (appliedDiscount) {
+    discountAmount = appliedDiscount.type === 'percentage' 
+      ? (subtotal * Number(appliedDiscount.value)) / 100 
+      : Number(appliedDiscount.value);
+  }
+  const finalTotal = Math.max(0, subtotal - discountAmount);
+
   const handleSubmitTrip = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.storeId) return toast.error("Please select a store");
-    
+    if (!formData.locationId) return toast.error("Please select a store");
     setIsSubmitting(true);
 
     try {
-      // A. GET A VALID SYSTEM USER (Required for cashierid)
       const { data: staffUser } = await supabase.from('users').select('userid').limit(1).single();
-
-      // B. INSERT MASTER TRANSACTION (salestransactions)
       const { data: sale, error: saleError } = await supabase
-        .from('salestransactions')
+        .from('sales_transactions')
         .insert({
           transactionnumber: `RES-${Date.now()}`,
-          storeid: parseInt(formData.storeId),
-          customerid: customerId, 
+          locationid: parseInt(formData.locationId),
+          customerid: userId, 
           cashierid: staffUser?.userid || 1, 
-          paymentmethod: 'cash', // Matches your lowercase enum exactly
-          totalprice: cart.reduce((sum, i) => sum + (i.currentprice * i.qty), 0)
+          paymentmethod: 'cash', 
+          totalprice: finalTotal
         })
-        .select()
-        .single();
+        .select().single();
 
       if (saleError) throw saleError;
 
-      // C. BATCH LOOKUP (Required for salesitems)
       const productIds = cart.map(i => i.productid);
-      const { data: batchData, error: batchError } = await supabase
-        .from('batches')
-        .select('batchid, productid')
-        .in('productid', productIds);
+      const { data: batchData } = await supabase.from('batches').select('batchid, productid').in('productid', productIds);
 
-      if (batchError || !batchData) throw new Error("Could not verify stock batches.");
-
-      // D. INSERT LINE ITEMS (salesitems)
       const salesItemsRows = cart.map(item => {
-        const matchingBatch = batchData.find(b => b.productid === item.productid);
-        
-        if (!matchingBatch) {
-          throw new Error(`Item "${item.productname}" has no available stock batch in the database.`);
-        }
-
+        const matchingBatch = batchData?.find(b => b.productid === item.productid);
         return {
           saleid: sale.saleid,
-          batchid: matchingBatch.batchid,
+          batchid: matchingBatch?.batchid,
+          discountid: appliedDiscount?.discountid || null,
           quantity: item.qty,
           unitprice: item.currentprice,
           finalprice: item.currentprice * item.qty
         };
       });
 
-      const { error: itemsError } = await supabase.from('salesitems').insert(salesItemsRows);
-      if (itemsError) throw itemsError;
-
-      // E. SUCCESS & CLEANUP
+      await supabase.from('sales_items').insert(salesItemsRows);
       localStorage.removeItem('active_cart');
-      toast.success("Linked! Reservation recorded in Supabase.");
+      toast.success("Confirmed!");
       router.push('/customer/search');
-
     } catch (error: any) {
-      console.error("Supabase Submission Error:", error);
       toast.error(error.message || "Checkout failed");
-    } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (loading) return <div className="p-20 text-center font-black animate-pulse">SYNCHRONIZING WITH SUPABASE...</div>;
+  if (loading) return <div className="p-20 text-center font-black animate-pulse uppercase tracking-widest text-gray-300">Synchronizing...</div>;
 
   return (
     <div className="max-w-5xl mx-auto p-6 md:p-12">
-      <div className="mb-10">
-        <h1 className="text-4xl font-black text-[#263A29] tracking-tighter">CONFIRM PICKUP</h1>
-        <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-2">Database-Linked Reservation System</p>
-      </div>
+      <h1 className="text-4xl font-black text-[#263A29] mb-10 tracking-tighter">CONFIRM PICKUP</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* LEFT: FORM */}
         <div className="lg:col-span-2">
           <form onSubmit={handleSubmitTrip} className="space-y-6">
             <div className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm space-y-5">
               <h3 className="text-[10px] font-black uppercase text-gray-300 tracking-[0.2em]">Contact Information</h3>
-              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-[#41644A] ml-2">Full Name</label>
-                  <input 
-                    type="text" required value={formData.fullName}
-                    onChange={(e) => setFormData({...formData, fullName: e.target.value})}
-                    className="w-full p-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-[#41644A] outline-none font-bold"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-[#41644A] ml-2">Phone Number</label>
-                  <input 
-                    type="tel" required value={formData.phone}
-                    onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                    className="w-full p-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-[#41644A] outline-none font-bold"
-                  />
-                </div>
+                <input type="text" placeholder="Full Name" required value={formData.fullName} onChange={(e) => setFormData({...formData, fullName: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl outline-none font-bold" />
+                <input type="tel" placeholder="Phone" required value={formData.phone} onChange={(e) => setFormData({...formData, phone: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl outline-none font-bold" />
               </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-[#41644A] ml-2">Select Branch for Pickup</label>
-                <select 
-                  required value={formData.storeId}
-                  onChange={(e) => setFormData({...formData, storeId: e.target.value})}
-                  className="w-full p-5 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-[#41644A] outline-none font-bold appearance-none cursor-pointer"
-                >
-                  <option value="">Choose a store...</option>
-                  {stores.map(s => <option key={s.storeid} value={s.storeid}>{s.storename}</option>)}
-                </select>
-              </div>
+              <select required value={formData.locationId} onChange={(e) => setFormData({...formData, locationId: e.target.value})} className="w-full p-5 bg-gray-50 rounded-2xl outline-none font-bold appearance-none cursor-pointer">
+                <option value="">Select Branch...</option>
+                {stores.map(s => <option key={s.locationid} value={s.locationid}>{s.name}</option>)}
+              </select>
             </div>
-
-            <button 
-              type="submit" disabled={isSubmitting}
-              className={`w-full py-6 rounded-[30px] font-black uppercase tracking-widest transition-all ${isSubmitting ? 'bg-gray-100 text-gray-400' : 'bg-[#263A29] text-white hover:bg-[#41644A] shadow-xl hover:-translate-y-1'}`}
-            >
+            <button type="submit" disabled={isSubmitting} className="w-full py-6 bg-[#263A29] text-white rounded-[30px] font-black uppercase tracking-widest hover:bg-[#41644A] transition-all">
               {isSubmitting ? 'Processing...' : 'Finalize Reservation'}
             </button>
           </form>
         </div>
 
-        {/* RIGHT: SUMMARY */}
+        {/* SIDEBAR SUMMARY */}
         <div className="lg:col-span-1">
-          <div className="bg-[#263A29] rounded-[40px] p-8 text-white sticky top-8">
-            <h2 className="text-xs font-black uppercase opacity-50 tracking-widest mb-6">Order Summary</h2>
-            <div className="space-y-4 mb-10 max-h-[40vh] overflow-y-auto custom-scrollbar">
-              {cart.map((item, idx) => (
-                <div key={idx} className="flex justify-between items-start border-b border-white/10 pb-4">
-                  <div>
-                    <p className="font-bold text-sm leading-tight">{item.productname || item.name}</p>
-                    <p className="text-[10px] opacity-60 mt-1">QTY: {item.qty}</p>
+          <div className="bg-[#263A29] rounded-[40px] p-8 text-white sticky top-8 space-y-8">
+            <div>
+              <h2 className="text-xs font-black uppercase opacity-50 tracking-widest mb-6">Order Summary</h2>
+              <div className="space-y-4 max-h-[30vh] overflow-y-auto pr-2 custom-scrollbar">
+                {cart.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-start border-b border-white/10 pb-4">
+                    <p className="font-bold text-xs flex-1">{item.name || item.productname}</p>
+                    <p className="font-mono text-xs ml-4">${(item.currentprice * item.qty).toFixed(2)}</p>
                   </div>
-                  <p className="font-mono text-sm">${(item.currentprice * item.qty).toFixed(2)}</p>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-            
-            <div className="border-t border-white/20 pt-6">
-              <p className="text-[10px] font-black uppercase opacity-50 tracking-widest">Total to pay at store</p>
-              <p className="text-5xl font-black mt-1">${cart.reduce((sum, i) => sum + (i.currentprice * i.qty), 0).toFixed(2)}</p>
+
+            {/* FIXED DISCOUNT INPUT SECTION */}
+            <div className="bg-white/5 p-6 rounded-[30px] border border-white/10 w-full overflow-hidden">
+              <label className="text-[9px] font-black uppercase opacity-50 tracking-[0.2em] mb-3 block">Promo Code</label>
+              <div className="flex items-center gap-2 w-full">
+                <input 
+                  type="text" value={discountInput} onChange={(e) => setDiscountInput(e.target.value)} 
+                  placeholder="Code" 
+                  className="bg-white/10 border border-white/10 rounded-xl px-4 py-3 text-xs font-bold w-[65%] focus:bg-white/20 outline-none"
+                />
+                <button 
+                  type="button"
+                  onClick={applyDiscountCode} 
+                  className="bg-white text-[#263A29] px-1 py-3 rounded-xl text-[10px] font-black uppercase hover:bg-yellow-400 transition-all w-[35%]"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+
+            {/* TOTALS */}
+            <div className="border-t border-white/20 pt-6 space-y-3">
+              <div className="flex justify-between text-[10px] font-bold opacity-60 uppercase">
+                <span>Subtotal</span>
+                <span>${subtotal.toFixed(2)}</span>
+              </div>
+              {appliedDiscount && (
+                <div className="flex justify-between text-[10px] font-black text-yellow-400 uppercase tracking-widest">
+                  <span>Discount</span>
+                  <span>-${discountAmount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="pt-4">
+                <p className="text-[10px] font-black uppercase opacity-50 tracking-widest mb-1">Pay at store</p>
+                <p className="text-5xl font-black text-yellow-400 tracking-tighter">${finalTotal.toFixed(2)}</p>
+              </div>
             </div>
           </div>
         </div>

@@ -5,41 +5,54 @@ import { revalidatePath } from 'next/cache';
 export async function updateProductPrice(formData: FormData) {
   const productName = formData.get('productName');
   const newPrice = parseFloat(formData.get('price') as string);
+  const staffId = formData.get('staffId'); // Recommended: pass this from the form
 
-  // 1. Get the current product info for the Audit Log
-  const { data: product } = await supabase
+  // 1. Get current product info
+  // NEW SCHEMA: Querying 'name' instead of 'productname'
+  const { data: product, error: fetchError } = await supabase
     .from('products')
     .select('productid, currentprice')
-    .eq('productname', productName)
+    .eq('name', productName)
     .single();
 
-  if (!product) return { success: false };
+  if (fetchError || !product) {
+    console.error("Product not found:", productName);
+    return { success: false, message: "Product not found" };
+  }
 
-  // 2. Update the Price
+  // 2. Update the Price in the 'products' table
   const { error: updateError } = await supabase
     .from('products')
     .update({ currentprice: newPrice })
     .eq('productid', product.productid);
 
-  if (updateError) return { success: false };
+  if (updateError) {
+    console.error("Update Error:", updateError.message);
+    return { success: false, message: "Update failed" };
+  }
 
-  // 3. Log the change to 'auditlogs' (Using your exact column names)
+  // 3. Log the change to 'auditlogs'
+  // NEW SCHEMA: Column names match your RTF exactly
   const { error: logError } = await supabase
     .from('auditlogs')
     .insert([{
       tablename: 'products',
-      operation: 'UPDATE',
       recordid: product.productid,
-      changedate: new Date().toISOString(),
-      oldvalues: { price: product.currentprice }, // Sending as JSONB object
-      newvalues: { price: newPrice },             // Sending as JSONB object
-      changedby: 1 // Assuming 1 is your system user ID
+      operation: 'UPDATE',
+      oldvalues: { currentprice: product.currentprice }, // JSONB format
+      newvalues: { currentprice: newPrice },             // JSONB format
+      changedby: staffId ? parseInt(staffId as string) : 1, // Must be a valid User ID (integer)
+      changedate: new Date().toISOString()
     }]);
 
-  if (logError) console.error("Logging Error:", logError.message);
+  if (logError) {
+    console.error("Logging Error:", logError.message);
+    // We don't return false here because the price update actually succeeded
+  }
 
-  // 4. Tell the Home Page to refresh the data
+  // 4. Revalidate paths to show fresh data
   revalidatePath('/'); 
+  revalidatePath('/restocker/pricing');
   
   return { success: true };
 }

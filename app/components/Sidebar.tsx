@@ -28,13 +28,13 @@ export default function Sidebar() {
   const menuConfig: Record<string, any[]> = {
     'staff': [
       // ADDED: The proposal explicitly requires "Checkout Operations" for Cashiers to scan barcodes, deduct stock, and process Octopus/AlipayHK/PayMe[cite: 41].
+      { name: 'Home', icon: '🏠', path: '/staff' },
       { name: 'Checkout POS', icon: '🛒', path: '/staff/checkout' }, 
-      { name: 'Task List', icon: '✅', path: '/staff' },
+      { name: 'Transaction logs', icon: '✅', path: '/staff/tasklist' },
       { name: 'Inventory Check', icon: '📦', path: '/staff/inventory' }, // This handles the "Customer Support" stock/aisle queries[cite: 42].
       { name: 'Expiry Alerts', icon: '⌛', path: '/staff/expiry' }, 
     ],
     'manager': [
-      { name: 'Home', icon: '🏠', path: '/manager' },
       { name: 'Sales Analytics', icon: '📈', path: '/manager' }, // Renamed from Overview to match daily/weekly/monthly sales trends.
       { name: 'Promotions', icon: '✨', path: '/manager/promotions' }, // ADDED: Flash sales and markdown management for expiring/overstock goods.
       { name: 'Stock Adjustments', icon: '✍️', path: '/manager/adjustments' }, // Required: record stock changes with mandatory reason codes (theft, damage).

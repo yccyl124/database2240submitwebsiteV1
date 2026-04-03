@@ -17,7 +17,6 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // 1. Fetch user from Supabase
       const { data: user, error } = await supabase
         .from('users')
         .select('userid, email, passwordhash, role')
@@ -25,29 +24,22 @@ export default function LoginPage() {
         .single();
 
       if (error || !user) {
-        throw new Error("User email not found.");
+        throw new Error("User account not found.");
       }
       
-      // 2. Password Check (Plain text for now, match your DB)
       if (String(user.passwordhash).trim() !== password.trim()) {
         throw new Error("Incorrect password.");
       }
 
-      // 3. Save Session to LocalStorage
+      // Save Member Session
       localStorage.setItem('role', user.role);
       localStorage.setItem('userEmail', user.email);
       localStorage.setItem('userId', user.userid.toString());
 
       toast.success(`Welcome back!`);
       
-      /**
-       * 4. REDIRECTION LOGIC 
-       * Maps roles to your (dashboard) folders.
-       * Admin maps to /restocker per your project specs.
-       */
       const roleKey = user.role.toLowerCase().trim();
       const paths: Record<string, string> = {
-        'admin': '/staff',
         'restocker': '/restocker',
         'manager': '/manager',
         'staff': '/staff',
@@ -55,8 +47,6 @@ export default function LoginPage() {
       };
       
       const targetPath = paths[roleKey] || '/';
-      
-      // Navigate and Refresh to clear stale state
       router.push(targetPath);
       router.refresh();
 
@@ -66,12 +56,24 @@ export default function LoginPage() {
     }
   };
 
+  // --- FIXED: Handle Guest Access and Redirect to Main Page ---
+  const handleGuestEntry = () => {
+    localStorage.setItem('role', 'guest');
+    localStorage.removeItem('userId'); // Ensure clean state
+    localStorage.removeItem('userEmail');
+    
+    toast.success("Entering as Guest");
+    
+    // Redirect to the original main landing page
+    router.push('/');
+    router.refresh();
+  };
+
   return (
     <div className="h-screen w-screen bg-[#f3f4f1] flex items-center justify-center p-6 overflow-hidden">
-      {/* Container: Locked at 700px height to prevent overflow issues */}
       <div className="flex flex-col lg:flex-row w-full max-w-5xl bg-white rounded-[40px] shadow-2xl overflow-hidden h-full max-h-[700px]">
         
-        {/* Left Side: Branding (42%) */}
+        {/* Left Side: Branding */}
         <div className="hidden lg:flex lg:w-[42%] bg-[#41644A] p-12 flex-col justify-center relative text-white">
           <span className="absolute top-8 left-10 text-8xl opacity-10 font-serif select-none">“</span>
           <div className="relative z-10 space-y-6">
@@ -88,7 +90,7 @@ export default function LoginPage() {
           <span className="absolute bottom-4 right-10 text-8xl opacity-10 font-serif rotate-180 select-none">“</span>
         </div>
 
-        {/* Right Side: Form (58%) */}
+        {/* Right Side: Form */}
         <div className="w-full lg:w-[58%] p-10 lg:px-16 flex flex-col justify-center overflow-y-auto">
           <div className="mb-8">
             <h1 className="text-3xl font-black text-[#263A29]">Welcome Back!</h1>
@@ -102,6 +104,7 @@ export default function LoginPage() {
                 type="email" 
                 placeholder="email@example.com" 
                 className="w-full p-4 bg-[#f8f9f7] rounded-2xl outline-none border border-transparent focus:border-[#41644A]/30 transition-all text-[#263A29] text-sm font-semibold"
+                value={email || ''} 
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
@@ -113,6 +116,7 @@ export default function LoginPage() {
                 type="password" 
                 placeholder="••••••••" 
                 className="w-full p-4 bg-[#f8f9f7] rounded-2xl outline-none border border-transparent focus:border-[#41644A]/30 transition-all text-[#263A29] text-sm font-semibold"
+                value={password || ''}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
@@ -142,12 +146,12 @@ export default function LoginPage() {
               <div className="flex-grow border-t border-gray-100"></div>
             </div>
 
-            <Link 
-                href="/" 
-                className="block w-full text-center py-4 rounded-2xl border-2 border-[#41644A]/10 text-[#41644A] text-sm font-bold hover:bg-[#f3f4f1] transition-all"
+            <button 
+                onClick={handleGuestEntry}
+                className="w-full text-center py-4 rounded-2xl border-2 border-[#41644A]/10 text-[#41644A] text-sm font-bold hover:bg-[#f3f4f1] transition-all"
             >
               Continue as Guest
-            </Link>
+            </button>
 
             <p className="text-center text-xs font-bold text-gray-300">
               New here? <Link href="/auth/register" className="text-[#41644A] font-black hover:underline ml-1">Create an account</Link>

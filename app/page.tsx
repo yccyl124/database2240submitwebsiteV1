@@ -11,43 +11,50 @@ export default function MainPage() {
   const [stores, setStores] = useState<any[]>([]);
   const [trending, setTrending] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  // 1. Initial Load: Trending Items + Sales + Stores
+  // 1. Initial Load: Trending Items + Stores (Linked to New Schema)
   useEffect(() => {
+    setIsLoggedIn(!!localStorage.getItem('userId'));
+
     async function initData() {
+      // Fetch Products (name instead of productname)
       const { data: prods } = await supabase.from('products').select('*').limit(4);
-      const { data: sts } = await supabase.from('stores').select('*');
-      const { data: sales } = await supabase.from('orderitems').select('productid, quantity');
+      // Fetch Locations (name instead of storename)
+      const { data: sts } = await supabase.from('locations').select('*').eq('location_type', 'store');
+      // Fetch Sales Volume
+      const { data: sales } = await supabase.from('sales_items').select('quantity, batches(productid)');
 
       if (prods) {
         const trendingWithSales = prods.map(p => ({
           ...p,
-          sold: sales?.filter(s => s.productid === p.productid).reduce((acc, s) => acc + (s.quantity || 0), 0) || 0
+          productname: p.name,
+          sold: sales?.filter((s: any) => s.batches?.productid === p.productid).reduce((acc, s) => acc + (s.quantity || 0), 0) || 0
         }));
         setTrending(trendingWithSales);
       }
-      if (sts) setStores(sts);
+      if (sts) setStores(sts.map(s => ({ ...s, storename: s.name })));
     }
     initData();
   }, []);
 
-  // 2. Search Logic: Product + Stock + Store Names + Sales
+  // 2. Workable Search Logic: Linked to 'inventory' and 'locations'
   const handleViewStock = async (query: string) => {
     setLoading(true);
     setActiveView('stock');
     try {
-      const { data: products } = await supabase.from('products').select('*').ilike('productname', `%${query}%`);
-      const { data: inv } = await supabase.from('storeinventory').select(`quantity, stores(storename), batches(productid)`);
-      const { data: sales } = await supabase.from('orderitems').select('productid, quantity');
+      const { data: products } = await supabase.from('products').select('*').ilike('name', `%${query}%`);
+      const { data: inv } = await supabase.from('inventory').select(`quantity, locations(name), batches(productid)`);
+      const { data: sales } = await supabase.from('sales_items').select('quantity, batches(productid)');
 
       const merged = products?.map(p => {
-        const locations = inv?.filter(i => (i.batches as any)?.[0]?.productid === p.productid && i.quantity > 0)
-          .map(i => ({ name: (i.stores as any).storename, qty: i.quantity }));
+        const productLocs = inv?.filter((i: any) => i.batches?.productid === p.productid && i.quantity > 0)
+          .map((i: any) => ({ name: i.locations?.name, qty: i.quantity }));
         
-        const totalStock = locations?.reduce((acc, l) => acc + l.qty, 0) || 0;
-        const totalSold = sales?.filter(s => s.productid === p.productid).reduce((acc, s) => acc + (s.quantity || 0), 0) || 0;
+        const totalStock = productLocs?.reduce((acc, l) => acc + l.qty, 0) || 0;
+        const totalSold = sales?.filter((s: any) => s.batches?.productid === p.productid).reduce((acc, s) => acc + (s.quantity || 0), 0) || 0;
 
-        return { ...p, stock: totalStock, locations: locations || [], sold: totalSold };
+        return { ...p, productname: p.name, stock: totalStock, locations: productLocs || [], sold: totalSold };
       });
       setResults(merged || []);
     } finally {
@@ -71,8 +78,8 @@ export default function MainPage() {
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Section */}
-        <main className={`transition-all duration-700 p-10 flex flex-col items-center ${activeView !== 'none' ? 'w-1/2 border-r bg-gray-50/20' : 'w-full'}`}>
+        {/* Left Section (Original Google Layout) */}
+        <main className={`transition-all duration-700 p-10 flex flex-col items-center overflow-y-auto ${activeView !== 'none' ? 'w-1/2 border-r bg-gray-50/20' : 'w-full'}`}>
           <div className="text-center mt-12 mb-10">
             <h1 className="text-6xl font-black text-[#263A29] tracking-tighter mb-4">Find your fresh today.</h1>
             <p className="text-gray-400 font-medium italic">Search for products, stock, or nearest stores.</p>
@@ -88,10 +95,25 @@ export default function MainPage() {
             />
           </div>
 
-          <div className="flex gap-4 mb-20">
+          <div className="flex gap-4 mb-12">
             <button onClick={() => setActiveView('store')} className="px-8 py-4 bg-white border-2 rounded-2xl font-bold shadow-sm">📍 Nearest Store</button>
             <button onClick={() => handleViewStock(searchQuery)} className="px-8 py-4 bg-[#41644A] text-white rounded-2xl font-bold shadow-lg">🔍 View Stock</button>
           </div>
+
+          {/* GUEST MODE NOTICE */}
+          {!isLoggedIn && (
+             <div className="w-full max-w-4xl bg-[#41644A] p-10 rounded-[40px] text-white shadow-2xl relative overflow-hidden mb-12 border-8 border-white">
+                <span className="bg-yellow-400 text-[#263A29] px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">GUEST MODE</span>
+                <h2 className="text-3xl font-black mt-4 tracking-tighter leading-tight">Unlock the full Groceria experience.</h2>
+                <p className="text-sm font-medium opacity-80 mt-4 leading-relaxed mb-8 max-w-2xl">
+                    Join as a member today to start earning Loyalty Points, saving Wishlists, and tracking your Purchase History.
+                </p>
+                <div className="flex gap-4">
+                    <Link href="/auth/register" className="bg-white text-[#41644A] px-6 py-3 rounded-xl font-bold text-xs">Join Now</Link>
+                    <Link href="/auth/login" className="bg-white/10 text-white border border-white/20 px-6 py-3 rounded-xl font-bold text-xs">Sign In</Link>
+                </div>
+             </div>
+          )}
 
           <div className="w-full max-w-4xl">
             <h2 className="text-2xl font-black text-[#263A29] mb-6">Trending <span className="text-[10px] bg-[#41644A] text-white px-2 py-0.5 rounded uppercase ml-2">Live</span></h2>
@@ -110,7 +132,7 @@ export default function MainPage() {
           </div>
         </main>
 
-        {/* Right Sidebar */}
+        {/* Right Sidebar (Original style) */}
         {activeView !== 'none' && (
           <aside className="w-1/2 bg-[#f3f4f1] p-12 overflow-y-auto animate-in slide-in-from-right duration-500">
             <div className="flex justify-between items-center mb-10">
@@ -135,13 +157,20 @@ export default function MainPage() {
                       <p className="text-lg font-bold text-[#41644A]">${item.currentprice}</p>
                     </div>
                   </div>
-                  <div className="pt-4 border-t flex flex-wrap gap-2">
+                  <div className="pt-4 border-t flex flex-wrap gap-2 mb-4">
                     {item.locations.map((loc: any, idx: number) => (
                       <span key={idx} className="bg-gray-100 px-3 py-1 rounded-full text-[11px] font-bold text-[#263A29]">
-                        {loc.name}: <span className="text-[#41644A]">{loc.qty}</span>
+                        {loc.name}: <span className="text-[#41644A] font-black">{loc.qty}</span>
                       </span>
                     ))}
                   </div>
+
+                  {/* SHOPPING LIST BUTTON REMOVED FOR GUESTS - EXCLUSIVE FOR MEMBERS */}
+                  {isLoggedIn && (
+                    <button className="w-full bg-[#263A29] text-white py-4 rounded-2xl font-bold uppercase text-xs tracking-widest">
+                       Add to shopping list
+                    </button>
+                  )}
                 </div>
               ))}
               {activeView === 'store' && stores.map((s, i) => (

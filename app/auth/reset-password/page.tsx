@@ -1,56 +1,58 @@
-'use client';
-
-import { useState } from 'react';
+'use server'
 import { supabase } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
-import { toast } from 'react-hot-toast';
+import { revalidatePath } from 'next/cache';
 
-export default function ResetPasswordPage() {
-  const [newPassword, setNewPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const router = useRouter();
+export async function updateProductPrice(formData: FormData) {
+  const productName = formData.get('productName');
+  const newPrice = parseFloat(formData.get('price') as string);
+  const staffId = formData.get('staffId'); // Recommended: pass this from the form
 
-  const handleUpdatePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  // 1. Get current product info
+  // NEW SCHEMA: Querying 'name' instead of 'productname'
+  const { data: product, error: fetchError } = await supabase
+    .from('products')
+    .select('productid, currentprice')
+    .eq('name', productName)
+    .single();
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword
-    });
+  if (fetchError || !product) {
+    console.error("Product not found:", productName);
+    return { success: false, message: "Product not found" };
+  }
 
-    if (error) {
-      toast.error(error.message);
-      setLoading(false);
-    } else {
-      toast.success('Password updated successfully!');
-      router.push('/auth/login');
-    }
-  };
+  // 2. Update the Price in the 'products' table
+  const { error: updateError } = await supabase
+    .from('products')
+    .update({ currentprice: newPrice })
+    .eq('productid', product.productid);
 
-  return (
-    <div className="min-h-screen bg-[#f3f4f1] flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-[40px] shadow-2xl p-10">
-        <h1 className="text-2xl font-black text-[#263A29] mb-6">Set New Password</h1>
-        <form onSubmit={handleUpdatePassword} className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-[11px] font-bold text-gray-400 uppercase tracking-widest ml-1">New Password</label>
-            <input 
-              type="password" 
-              placeholder="••••••••" 
-              className="w-full p-4 bg-[#f8f9f7] rounded-2xl outline-none border border-transparent focus:border-[#41644A]/30 transition-all text-[#263A29] font-semibold"
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-            />
-          </div>
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-[#41644A] hover:bg-[#263A29] text-white py-4 rounded-2xl font-bold transition-all"
-          >
-            {loading ? 'Updating...' : 'Update Password'}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
+  if (updateError) {
+    console.error("Update Error:", updateError.message);
+    return { success: false, message: "Update failed" };
+  }
+
+  // 3. Log the change to 'auditlogs'
+  // NEW SCHEMA: Column names match your RTF exactly
+  const { error: logError } = await supabase
+    .from('auditlogs')
+    .insert([{
+      tablename: 'products',
+      recordid: product.productid,
+      operation: 'UPDATE',
+      oldvalues: { currentprice: product.currentprice }, // JSONB format
+      newvalues: { currentprice: newPrice },             // JSONB format
+      changedby: staffId ? parseInt(staffId as string) : 1, // Must be a valid User ID (integer)
+      changedate: new Date().toISOString()
+    }]);
+
+  if (logError) {
+    console.error("Logging Error:", logError.message);
+    // We don't return false here because the price update actually succeeded
+  }
+
+  // 4. Revalidate paths to show fresh data
+  revalidatePath('/'); 
+  revalidatePath('/restocker/pricing');
+  
+  return { success: true };
 }

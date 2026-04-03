@@ -11,12 +11,18 @@ export default function PromotionsPage() {
     async function fetchAllPromotions() {
       setLoading(true);
       
-      // Select the exact columns provided in your table schema
+      // ALIASING: mapping new schema (code, value, type) to your existing keys
       const { data, error } = await supabase
         .from('discounts') 
-        .select('discountcode, discountvalue, discounttype, enddate, description')
+        .select(`
+          discountcode:code, 
+          discountvalue:value, 
+          discounttype:type, 
+          enddate, 
+          description
+        `)
         .eq('status', 'active')
-        // Filter for store-wide or category-wide offers (where productid is null)
+        // Keeps your logic of showing store-wide/category-wide offers
         .is('productid', null) 
         .lte('startdate', new Date().toISOString().split('T')[0])
         .gte('enddate', new Date().toISOString().split('T')[0])
@@ -64,7 +70,6 @@ export default function PromotionsPage() {
                   {promo.discounttype === 'percentage' ? `${Math.round(promo.discountvalue)}%` : `$${promo.discountvalue}`} OFF
                 </h3>
                 
-                {/* Dynamically linked description from your table */}
                 <p className="text-gray-500 font-medium text-base mb-6 leading-relaxed">
                   {promo.description || "Auto-applied reward for your current session."}
                 </p>

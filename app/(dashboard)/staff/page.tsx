@@ -2,164 +2,215 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { toast } from 'react-hot-toast';
+import Script from 'next/script';
+import Link from 'next/link';
+import { 
+  ShoppingBag, 
+  TrendingUp, 
+  CheckCircle2, 
+  PackageSearch,
+  Timer,
+  AlertTriangle,
+  ChevronRight
+} from 'lucide-react';
 
-export default function TransactionLogging() {
-  const [transactions, setTransactions] = useState<any[]>([]);
+export default function StaffHomePage() {
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [stats, setStats] = useState({ todayRevenue: 0, todayOrders: 0, criticalExpiries: 0 });
+  const [recentSales, setRecentSales] = useState<any[]>([]);
+  const [dbData, setDbData] = useState<any[]>([]);
   
-  // --- MODAL STATE ---
-  const [selectedTx, setSelectedTx] = useState<any | null>(null);
+  // FIXED: State to hold current user ID safely
+  const [currentStaffId, setCurrentStaffId] = useState<string | null>(null);
 
-  const fetchTransactions = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('salestransactions')
-        .select(`
-          saleid, transactionnumber, created_at, cashierid, customerid, paymentmethod, totalprice,
-          salesitems (
-            quantity, unitprice, finalprice,
-            batches (products (productname, barcode))
-          )
-        `)
-        .order('created_at', { ascending: false })
-        .limit(100);
+  const STAFF_COLORS = ['#263A29', '#F59E0B', '#2563EB', '#E11D48', '#7C3AED', '#0891B2'];
 
-      if (error) throw error;
+  useEffect(() => {
+    async function loadStaffData() {
+      try {
+        setLoading(true);
+        
+        // Safely access localStorage inside useEffect (Client-side only)
+        const staffId = localStorage.getItem('userId');
+        setCurrentStaffId(staffId); // Save for visual display
 
-      const formatted = data?.map(tx => {
-        const itemsList = tx.salesitems?.map((item: any) => {
-          const productName = item.batches?.products?.productname || 'Unknown Item';
-          return `${item.quantity}x ${productName}`;
-        }).join(', ');
+        if (!staffId) return;
 
-        return { ...tx, itemsSummary: itemsList || 'No items recorded' };
+        const today = new Date().toISOString().split('T')[0];
+        const nextWeek = new Date();
+        nextWeek.setDate(nextWeek.getDate() + 7);
+        const nextWeekStr = nextWeek.toISOString().split('T')[0];
+
+        // 1. Fetch Today's Transactions for this Staff
+        const { data: sales, error: salesError } = await supabase
+          .from('sales_transactions')
+          .select(`
+            totalprice, created_at, paymentmethod, transactionnumber,
+            sales_items (
+              quantity, 
+              batches (products (name))
+            )
+          `)
+          .eq('cashierid', parseInt(staffId))
+          .gte('created_at', today);
+
+        if (salesError) throw salesError;
+
+        // 2. Fetch Expiry Alerts
+        const { count: expiryCount } = await supabase
+          .from('batches')
+          .select('*', { count: 'exact', head: true })
+          .lte('expirydate', nextWeekStr)
+          .gte('expirydate', today)
+          .gt('remainingqty', 0);
+
+        if (sales) {
+          setDbData(sales);
+          const total = sales.reduce((sum, s) => sum + Number(s.totalprice || 0), 0);
+          setStats({ 
+            todayRevenue: total, 
+            todayOrders: sales.length, 
+            criticalExpiries: expiryCount || 0 
+          });
+          setRecentSales(sales.slice(-5).reverse());
+        }
+      } catch (err) {
+        console.error("Staff Dashboard Fetch Error:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadStaffData();
+  }, []);
+
+  const drawCharts = () => {
+    if (typeof window === 'undefined' || !(window as any).google || dbData.length === 0) return;
+    const google = (window as any).google;
+    google.charts.load('current', { packages: ['corechart'] });
+    google.charts.setOnLoadCallback(() => {
+      
+      const payMap: any = {};
+      dbData.forEach(s => {
+        const method = s.paymentmethod?.replace('_', ' ') || 'Other';
+        payMap[method] = (payMap[method] || 0) + Number(s.totalprice);
+      });
+      const payTable = google.visualization.arrayToDataTable([['Method', 'Revenue'], ...Object.entries(payMap)]);
+      new google.visualization.PieChart(document.getElementById('staff_pie_chart')).draw(payTable, {
+        title: 'Settlement Summary (By Value)',
+        pieHole: 0.4,
+        colors: STAFF_COLORS,
+        chartArea: { width: '90%', height: '80%' },
+        legend: { position: 'bottom', textStyle: { fontSize: 10, bold: true } },
+        backgroundColor: 'transparent'
       });
 
-      setTransactions(formatted || []);
-    } catch (err: any) {
-      toast.error("Failed to load logs.");
-    } finally {
-      setLoading(false);
-    }
+      const itemMap: any = {};
+      dbData.forEach(s => s.sales_items?.forEach((si: any) => {
+        const n = si.batches?.products?.name || 'Unknown';
+        itemMap[n] = (itemMap[n] || 0) + si.quantity;
+      }));
+      const sortedItems = Object.entries(itemMap).sort((a:any, b:any) => b[1] - a[1]).slice(0, 5);
+      const itemTable = google.visualization.arrayToDataTable([
+        ['Product', 'Units', { role: 'style' }], 
+        ...sortedItems.map((d, i) => [d[0], d[1], STAFF_COLORS[i % STAFF_COLORS.length]])
+      ]);
+      new google.visualization.BarChart(document.getElementById('staff_bar_chart')).draw(itemTable, {
+        title: 'Top Items Processed Today',
+        legend: { position: 'none' },
+        chartArea: { width: '60%', height: '70%' },
+        hAxis: { minValue: 0 },
+        backgroundColor: 'transparent'
+      });
+    });
   };
 
-  useEffect(() => { fetchTransactions(); }, []);
-
-  const filteredTransactions = transactions.filter(tx => 
-    tx.transactionnumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tx.cashierid.toString().includes(searchTerm)
-  );
+  useEffect(() => { if (!loading) drawCharts(); }, [loading, dbData]);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <header className="mb-10 flex justify-between items-end">
+    <div className="p-8 max-w-7xl mx-auto space-y-10 min-h-screen bg-[#FBFBFB]">
+      <Script src="https://www.gstatic.com/charts/loader.js" onLoad={drawCharts} />
+
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl font-black text-[#263A29]">Transaction Logs</h2>
-          <p className="text-gray-500 font-medium">Click any row to view full receipt details.</p>
+          <h1 className="text-4xl font-black text-[#263A29] tracking-tighter uppercase">Operations Hub</h1>
+          <p className="text-gray-400 font-bold text-xs uppercase tracking-widest mt-2 flex items-center gap-2">
+            <CheckCircle2 size={14} className="text-green-500" /> Terminal Active • Shift ID: {currentStaffId || '...'}
+          </p>
         </div>
-        <input 
-          type="text" 
-          placeholder="Search TRX or ID..." 
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="px-5 py-3 bg-white border border-gray-200 rounded-2xl font-bold text-sm outline-none focus:border-[#41644A] shadow-sm w-64"
-        />
+        
+        <div className="flex gap-3">
+            <Link href="/staff/checkout" className="bg-[#263A29] text-white px-8 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center gap-2 hover:bg-black transition-all shadow-lg">
+                <ShoppingBag size={16} /> Open POS
+            </Link>
+            <Link href="/staff/inventory" className="bg-white text-[#263A29] border border-gray-100 px-8 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center gap-2 hover:bg-gray-50 transition-all shadow-sm">
+                <PackageSearch size={16} /> Stock Check
+            </Link>
+        </div>
       </header>
 
-      <div className="bg-white rounded-[40px] border border-gray-100 overflow-hidden shadow-2xl">
-        <table className="w-full text-left">
-          <thead className="bg-[#41644A] text-white text-[10px] font-black uppercase tracking-widest">
-            <tr>
-              <th className="p-6">Timestamp</th>
-              <th className="p-6">Transaction ID</th>
-              <th className="p-6">Items Sold</th>
-              <th className="p-6 text-right">Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50 text-sm">
-            {filteredTransactions.map((tx) => (
-              <tr 
-                key={tx.saleid} 
-                onClick={() => setSelectedTx(tx)}
-                className="hover:bg-green-50/50 cursor-pointer transition-colors group"
-              >
-                <td className="p-6 text-xs font-bold text-gray-400">
-                  {new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </td>
-                <td className="p-6 font-mono text-xs font-black text-[#41644A] group-hover:underline">
-                  {tx.transactionnumber}
-                </td>
-                {/* FIXED: whitespace-normal allows the text to wrap into multiple lines */}
-                <td className="p-6 max-w-xs whitespace-normal">
-                  <p className="text-gray-600 leading-relaxed font-medium">
-                    {tx.itemsSummary}
-                  </p>
-                </td>
-                <td className="p-6 text-right font-black text-[#263A29]">
-                  ${Number(tx.totalprice).toFixed(2)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm">
+            <p className="text-[10px] font-black text-gray-400 uppercase mb-2">Shift Revenue</p>
+            <h4 className="text-4xl font-black text-[#263A29] tracking-tighter">${stats.todayRevenue.toFixed(2)}</h4>
+            <div className="mt-4 flex items-center gap-2 text-green-600 text-[10px] font-black uppercase"><TrendingUp size={12}/> Live Log</div>
+        </div>
+        <div className="bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm">
+            <p className="text-[10px] font-black text-gray-400 uppercase mb-2">Transactions</p>
+            <h4 className="text-4xl font-black text-[#263A29] tracking-tighter">{stats.todayOrders}</h4>
+            <div className="mt-4 flex items-center gap-2 text-blue-500 text-[10px] font-black uppercase"><Timer size={12}/> Active Session</div>
+        </div>
+        <Link href="/staff/expiry" className="bg-red-50 p-8 rounded-[40px] border border-red-100 group hover:bg-red-100 transition-all">
+            <p className="text-[10px] font-black text-red-400 uppercase mb-2">Shelf Alerts</p>
+            <h4 className="text-4xl font-black text-red-600 tracking-tighter">{stats.criticalExpiries} Items</h4>
+            <div className="mt-4 flex items-center gap-2 text-red-600 text-[10px] font-black uppercase font-bold">Action Required <ChevronRight size={12}/></div>
+        </Link>
       </div>
 
-      {/* --- TRANSACTION DETAIL MODAL --- */}
-      {selectedTx && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-[40px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-8 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-              <div>
-                <h3 className="text-xl font-black text-[#263A29]">Receipt Detail</h3>
-                <p className="text-[10px] font-bold text-gray-400 uppercase">{selectedTx.transactionnumber}</p>
-              </div>
-              <button onClick={() => setSelectedTx(null)} className="text-gray-300 hover:text-red-500 font-black text-2xl">✕</button>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-white p-10 rounded-[45px] border border-gray-100 shadow-xl overflow-hidden">
+            <h3 className="text-xs font-black text-[#263A29] uppercase tracking-widest mb-6">Settlement Breakdown</h3>
+            <div id="staff_pie_chart" className="w-full h-[350px]">
+                <p className="text-center py-40 text-gray-300 animate-pulse font-bold uppercase text-[10px]">Processing Till Data...</p>
             </div>
-            
-            <div className="p-8 space-y-6">
-              <div className="space-y-4">
-                {selectedTx.salesitems.map((item: any, i: number) => (
-                  <div key={i} className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold text-[#263A29]">{item.batches.products.productname}</p>
-                      <p className="text-[10px] text-gray-400 font-bold uppercase">{item.quantity} x ${item.unitprice}</p>
-                    </div>
-                    <p className="font-black text-[#263A29]">${Number(item.finalprice).toFixed(2)}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="pt-6 border-t border-dashed border-gray-200 space-y-2">
-                <div className="flex justify-between text-xs font-bold text-gray-400 uppercase">
-                  <span>Payment Method</span>
-                  <span>{selectedTx.paymentmethod}</span>
-                </div>
-                <div className="flex justify-between text-xs font-bold text-gray-400 uppercase">
-                  <span>Cashier ID</span>
-                  <span>{selectedTx.cashierid}</span>
-                </div>
-              </div>
-
-              <div className="pt-4 flex justify-between items-end">
-                <p className="text-[10px] font-black uppercase text-[#41644A]">Total Paid</p>
-                <p className="text-4xl font-black text-[#263A29] tracking-tighter">${Number(selectedTx.totalprice).toFixed(2)}</p>
-              </div>
-            </div>
-            
-            <div className="p-6 bg-white">
-              <button 
-                onClick={() => setSelectedTx(null)}
-                className="w-full py-4 bg-[#263A29] text-white rounded-2xl font-black uppercase text-xs tracking-widest"
-              >
-                Close Record
-              </button>
-            </div>
-          </div>
         </div>
-      )}
+        <div className="bg-white p-10 rounded-[45px] border border-gray-100 shadow-xl overflow-hidden">
+            <h3 className="text-xs font-black text-[#263A29] uppercase tracking-widest mb-6">Product Throughput</h3>
+            <div id="staff_bar_chart" className="w-full h-[350px]">
+                <p className="text-center py-40 text-gray-300 animate-pulse font-bold uppercase text-[10px]">Analyzing Volume...</p>
+            </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest px-4">Your Recent Sales</h3>
+        <div className="bg-white rounded-[40px] border border-gray-100 shadow-sm overflow-hidden">
+            <table className="w-full text-left">
+                <thead className="bg-[#F9FBF9] text-[9px] font-black uppercase tracking-widest text-[#41644A] border-b border-gray-100">
+                    <tr>
+                        <th className="p-8">Time</th>
+                        <th className="p-8">TRX Number</th>
+                        <th className="p-8">Primary Item</th>
+                        <th className="p-8 text-right">Amount</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                    {recentSales.map((s, i) => (
+                        <tr key={i} className="hover:bg-gray-50 transition-colors">
+                            <td className="p-8 text-xs font-bold text-gray-400">
+                                {new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td className="p-8 font-mono text-xs font-black text-[#263A29]">#{s.transactionnumber}</td>
+                            <td className="p-8 text-[10px] text-gray-500 font-bold uppercase">
+                                {s.sales_items?.[0]?.batches?.products?.name || 'Bulk Item'}
+                                {s.sales_items?.length > 1 && <span className="text-[#41644A] ml-1">+{s.sales_items.length - 1} More</span>}
+                            </td>
+                            <td className="p-8 text-right font-black text-[#263A29] text-xl tracking-tighter">${Number(s.totalprice).toFixed(2)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+      </div>
     </div>
   );
 }

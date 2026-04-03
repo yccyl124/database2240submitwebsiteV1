@@ -7,6 +7,7 @@ import { toast } from 'react-hot-toast';
 import Link from 'next/link';
 
 export default function ForgotPasswordPage() {
+  // Initializing with '' ensures the component is controlled from the start
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -15,6 +16,7 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setLoading(true);
 
+    // Links to the 'email' identity in your database
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/auth/reset-password`,
     });
@@ -50,6 +52,8 @@ export default function ForgotPasswordPage() {
               type="email" 
               placeholder="email@example.com" 
               className="w-full p-4 bg-[#f8f9f7] rounded-2xl outline-none border border-transparent focus:border-[#41644A]/30 transition-all text-[#263A29] font-semibold"
+              // FIX: value attribute added to prevent the Uncontrolled Input error
+              value={email || ''} 
               onChange={(e) => setEmail(e.target.value)}
               required
             />

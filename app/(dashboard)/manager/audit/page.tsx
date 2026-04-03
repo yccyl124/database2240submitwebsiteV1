@@ -12,26 +12,41 @@ export default function AuditLogViewer() {
 
   useEffect(() => {
     async function fetchLogs() {
-      setLoading(true);
-      const { data: logData, error: logError } = await supabase
-        .from('auditlogs')
-        .select('logid, tablename, operation, oldvalues, newvalues, changedby, changedate')
-        .order('changedate', { ascending: false });
+      try {
+        setLoading(true);
+        // Updated: Using Supabase relationship to join 'users' table directly 
+        // using the 'changedby' foreign key from your schema.
+        const { data: logData, error: logError } = await supabase
+          .from('auditlogs')
+          .select(`
+            logid, 
+            tablename, 
+            operation, 
+            oldvalues, 
+            newvalues, 
+            changedate,
+            staff:users!changedby (fullname)
+          `)
+          .order('changedate', { ascending: false });
 
-      if (logError) {
+        if (logError) {
+          console.error("Audit fetch error:", logError.message);
+          setLoading(false);
+          return;
+        }
+
+        // Map the joined data so your JSX 'log.staffName' remains functional
+        const mappedLogs = logData?.map(log => ({
+          ...log,
+          staffName: log.staff?.fullname || `Staff #${log.changedby}`
+        }));
+
+        setLogs(mappedLogs || []);
+      } catch (err) {
+        console.error("Unexpected error:", err);
+      } finally {
         setLoading(false);
-        return;
       }
-
-      const { data: staffData } = await supabase.from('users').select('userid, fullname');
-
-      const mappedLogs = logData.map(log => ({
-        ...log,
-        staffName: staffData?.find(s => s.userid === log.changedby)?.fullname || `Staff #${log.changedby}`
-      }));
-
-      setLogs(mappedLogs);
-      setLoading(false);
     }
     fetchLogs();
   }, []);
@@ -92,7 +107,6 @@ export default function AuditLogViewer() {
                     </span>
                   </td>
                   <td className="p-8">
-                    {/* FIXED: Removed truncate, added whitespace-pre-wrap for formatted JSON */}
                     <div className="max-w-md bg-gray-50 p-4 rounded-2xl border border-gray-100">
                        <pre className="text-[10px] font-mono text-gray-600 whitespace-pre-wrap break-all max-h-24 overflow-hidden">
                          {formatJson(log.newvalues || log.oldvalues)}

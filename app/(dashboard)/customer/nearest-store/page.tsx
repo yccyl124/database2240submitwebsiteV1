@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 
-// 1. DYNAMIC IMPORT: This is the most important part to fix the appendChild error.
+// 1. DYNAMIC IMPORT: Maintained as requested for map stability
 const StoreMap = dynamic(() => import('@/components/StoreMap'), { 
   ssr: false,
   loading: () => (
@@ -33,19 +33,22 @@ export default function NearestStorePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get User Location
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        (err) => console.error("Location access denied:", err)
+        (err) => console.warn("Location access denied:", err.message),
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
       );
     }
 
     async function fetchStores() {
       try {
+        // ALIASING: mapping new schema to your StoreMap's expected keys
         const { data, error } = await supabase
-          .from('stores')
-          .select('storeid, storename, address, latitude, longitude');
+          .from('locations')
+          .select('storeid:locationid, storename:name, address, latitude, longitude')
+          .eq('location_type', 'store');
+        
         if (data) setStores(data);
       } catch (err) {
         console.error(err);
@@ -65,36 +68,48 @@ export default function NearestStorePage() {
 
   return (
     <div className="grid grid-cols-12 gap-6 h-[calc(100vh-180px)] p-4">
-      {/* Sidebar */}
-      <div className="col-span-12 lg:col-span-4 overflow-y-auto space-y-4 pr-2">
+      
+      {/* Sidebar - INCREASED WIDTH TO 5 COLUMNS */}
+      <div className="col-span-12 lg:col-span-5 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
         <div>
-          <h1 className="text-3xl font-black text-[#263A29]">Nearest Stores</h1>
-          <p className="text-gray-500 font-medium text-sm tracking-tight">Branches closest to your current location.</p>
+          <h1 className="text-3xl font-black text-[#263A29] tracking-tight">Nearest Stores</h1>
+          <p className="text-gray-500 font-medium text-sm">Branches closest to your current location.</p>
         </div>
 
         {loading ? (
-          <div className="p-10 text-center font-bold text-gray-400">Locating...</div>
+          <div className="p-10 text-center font-bold text-gray-400 animate-pulse uppercase tracking-widest">Locating...</div>
         ) : (
           sortedStores.map(s => (
-            <div key={s.storeid} className="p-6 border border-gray-100 rounded-[32px] bg-white shadow-sm hover:shadow-md transition-all">
+            <div key={s.storeid} className="p-6 border border-gray-100 rounded-[32px] bg-white shadow-sm hover:shadow-md transition-all group">
               <div className="flex justify-between items-start">
-                <h3 className="font-black text-[#263A29]">{s.storename}</h3>
+                <div className="flex-1 mr-4">
+                  <h3 className="font-black text-xl text-[#263A29] group-hover:text-[#41644A] transition-colors">{s.storename}</h3>
+                  <p className="text-sm text-gray-400 font-bold mt-2 leading-relaxed">{s.address}</p>
+                </div>
                 {userCoords && (
-                  <span className="text-[10px] font-black bg-[#f3f4f1] text-[#41644A] px-3 py-1 rounded-full uppercase">
+                  <span className="shrink-0 text-[10px] font-black bg-[#f3f4f1] text-[#41644A] px-4 py-2 rounded-full uppercase self-start">
                     {getDistance(userCoords.lat, userCoords.lng, s.latitude, s.longitude)} KM
                   </span>
                 )}
               </div>
-              <p className="text-xs text-gray-400 font-bold mt-2">{s.address}</p>
             </div>
           ))
         )}
+
+        {!userCoords && !loading && (
+          <div className="p-6 bg-amber-50 rounded-[24px] border border-amber-100">
+            <p className="text-[11px] font-black text-amber-700 uppercase tracking-wide leading-tight">
+              Pro Tip: Enable location services in your browser settings to see real-time distances to our branches.
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* Map Container */}
-      <div className="col-span-12 lg:col-span-8 rounded-[40px] overflow-hidden shadow-2xl bg-white border-8 border-white relative min-h-[400px]">
+      {/* Map Container - DECREASED WIDTH TO 7 COLUMNS */}
+      <div className="col-span-12 lg:col-span-7 rounded-[40px] overflow-hidden shadow-2xl bg-white border-8 border-white relative min-h-[400px]">
         <StoreMap stores={stores} userCoords={userCoords} />
       </div>
+
     </div>
   );
 }

@@ -18,11 +18,12 @@ export default function UnifiedShoppingPage() {
 
   useEffect(() => {
     async function init() {
-      // 1. Get Customer ID
-      const { data: customer } = await supabase.from('customers').select('customerid').limit(1).single();
-      if (customer) {
-        setCustomerId(customer.customerid);
-        fetchWishlist(customer.customerid);
+      // 1. Get User ID from new 'users' table (using the ID from login)
+      const storedId = localStorage.getItem('userId');
+      if (storedId) {
+        const numericId = parseInt(storedId);
+        setCustomerId(numericId);
+        fetchWishlist(numericId);
       }
 
       // 2. Load Daily Trip from Browser Memory
@@ -38,7 +39,7 @@ export default function UnifiedShoppingPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // RESTORED: Smart Search Logic
+  // Updated: Smart Search Logic using new schema column names
   useEffect(() => {
     const searchDb = async () => {
       if (searchTerm.length < 2) {
@@ -49,11 +50,11 @@ export default function UnifiedShoppingPage() {
         .from('products')
         .select(`
           productid, 
-          productname, 
+          productname:name, 
           currentprice,
-          productlocations(storeshelves(shelfnumber, storeaisles(aislenumber)))
+          store_layouts (aisle_number)
         `)
-        .ilike('productname', `%${searchTerm}%`)
+        .ilike('name', `%${searchTerm}%`)
         .limit(5);
       
       setSuggestions(data || []);
@@ -65,38 +66,49 @@ export default function UnifiedShoppingPage() {
 
   // Save Daily Trip to LocalStorage
   useEffect(() => {
-  // Only save if there's actually something to save
-  if (dailyList.length > 0) {
-    localStorage.setItem('shopping_list', JSON.stringify(dailyList));
-  }
-}, [dailyList]);
+    if (dailyList.length > 0) {
+      localStorage.setItem('shopping_list', JSON.stringify(dailyList));
+    }
+  }, [dailyList]);
 
-  async function fetchWishlist(cId: number) {
+  async function fetchWishlist(userId: number) {
     setLoading(true);
     try {
+      // Updated: fetch from user_collections where list_type is wishlist
       const { data } = await supabase
-        .from('customerwishlists')
-        .select(`wishlistid, productid, products (productname, currentprice, productlocations (storeshelves (shelfnumber, storeaisles (aislenumber))))`)
-        .eq('customerid', cId);
+        .from('user_collections')
+        .select(`
+          collectionid, 
+          productid, 
+          products (
+            name, 
+            currentprice, 
+            store_layouts (aisle_number)
+          )
+        `)
+        .eq('userid', userId)
+        .eq('list_type', 'wishlist');
 
       if (!data) return;
 
       const productIds = data.map(item => item.productid);
       const { data: invData } = await supabase
-        .from('storeinventory').select('quantity, batches(productid)')
+        .from('inventory')
+        .select('quantity, batches!inner(productid)')
         .in('batches.productid', productIds);
 
       const formatted = data.map(item => {
-        const stock = invData?.filter(inv => inv.batches?.[0]?.productid === item.productid)
+        const stock = invData?.filter((inv: any) => inv.batches?.productid === item.productid)
                               .reduce((sum, inv) => sum + inv.quantity, 0) || 0;
-        const loc = item.products?.[0]?.productlocations?.[0]?.storeshelves;
+        
+        const productObj: any = item.products;
         return {
-          wishlistId: item.wishlistid,
+          wishlistId: item.collectionid,
           productId: item.productid,
-          name: item.products?.[0]?.productname,
-          price: item.products?.[0]?.currentprice,
+          name: productObj?.name,
+          price: productObj?.currentprice,
           stock: stock,
-          aisle: loc?.[0]?.storeaisles?.[0]?.aislenumber || 'N/A'
+          aisle: productObj?.store_layouts?.[0]?.aisle_number || 'N/A'
         };
       });
 
@@ -110,8 +122,8 @@ export default function UnifiedShoppingPage() {
     const pId = product.productid || product.productId;
     const isWishlist = wishlist.find(w => w.productId === pId);
     
-    // Extract location safely
-    const locAisle = product.aisle || product.productlocations?.[0]?.storeshelves?.storeaisles?.aislenumber || 'N/A';
+    // Extract location from new layout path or existing mapping
+    const locAisle = product.aisle || product.store_layouts?.[0]?.aisle_number || 'N/A';
 
     const newItem = {
       uid: Date.now(),
@@ -134,15 +146,18 @@ export default function UnifiedShoppingPage() {
     const existing = wishlist.find(w => w.productId === pId);
 
     if (existing) {
-      await supabase.from('customerwishlists').delete().eq('wishlistid', existing.wishlistId);
+      await supabase.from('user_collections').delete().eq('collectionid', existing.wishlistId);
       setWishlist(prev => prev.filter(w => w.productId !== pId));
       toast.error("Alert Disabled");
     } else {
-      const { data, error } = await supabase
-        .from('customerwishlists')
-        .insert({ customerid: customerId, productid: pId })
-        .select()
-        .single();
+      const { error } = await supabase
+        .from('user_collections')
+        .insert({ 
+          userid: customerId, 
+          productid: pId, 
+          list_type: 'wishlist',
+          quantity: 1 
+        });
       
       if (!error) {
         fetchWishlist(customerId);
@@ -175,7 +190,6 @@ export default function UnifiedShoppingPage() {
       {/* 2. SEARCH & QUICK ADD */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-5 space-y-6">
-          {/* RESTORED: Search Input with Suggestions Overlay */}
           <div className="relative" ref={searchRef}>
             <input 
               type="text"
@@ -191,9 +205,9 @@ export default function UnifiedShoppingPage() {
                 {suggestions.map(p => (
                   <div key={p.productid} className="flex items-center justify-between p-5 hover:bg-gray-50 border-b border-gray-50 last:border-none">
                     <div className="flex-1">
-                      <p className="font-bold text-[#263A29] text-sm">{p.productname}</p>
+                      <p className="font-bold text-sm text-[#263A29]">{p.productname}</p>
                       <p className="text-[10px] font-black text-[#41644A] uppercase tracking-tighter">
-                        Aisle {p.productlocations?.[0]?.storeshelves?.storeaisles?.aislenumber || 'N/A'}
+                        Aisle {p.store_layouts?.[0]?.aisle_number || 'N/A'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -266,9 +280,6 @@ export default function UnifiedShoppingPage() {
                         <h4 className={`text-lg font-black ${item.checked ? 'line-through text-gray-400' : 'text-[#263A29]'}`}>{item.name}</h4>
                         {wishlist.find(w => w.productId === item.id)?.stock > 0 && (
                             <span className="bg-green-100 text-green-700 text-[9px] font-black px-2 py-0.5 rounded-md uppercase animate-pulse">Ready to Pick</span>
-                        )}
-                        {wishlist.find(w => w.productId === item.id)?.stock === 0 && (
-                            <span className="bg-orange-50 text-orange-500 text-[9px] font-black px-2 py-0.5 rounded-md uppercase">Watching Stock</span>
                         )}
                     </div>
                     <div className="flex items-center gap-3 mt-1">

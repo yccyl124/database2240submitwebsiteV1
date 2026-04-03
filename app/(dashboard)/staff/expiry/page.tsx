@@ -16,22 +16,23 @@ export default function StaffExpiryPage() {
       nextWeek.setDate(nextWeek.getDate() + 7);
       const nextWeekStr = nextWeek.toISOString().split('T')[0];
 
+      // UPDATED: Using 'remainingqty' and products 'name'
       const { data, error } = await supabase
         .from('batches')
         .select(`
           batchid,
           batchnumber,
           expirydate,
-          remainingquantity,
+          remainingqty,
           products!inner (
-            productname,
+            name,
             barcode
           )
         `)
         // CRITICAL FILTERS:
         .gte('expirydate', today)        // Not already thrown away
         .lte('expirydate', nextWeekStr)  // Expiring within a week
-        .gt('remainingquantity', 0)      // Still on the shelf
+        .gt('remainingqty', 0)           // Still on the shelf
         .order('expirydate', { ascending: true });
 
       if (!error) setExpiringItems(data || []);
@@ -41,25 +42,27 @@ export default function StaffExpiryPage() {
 
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-black text-[#263A29] mb-6">⚠️ SHORT-TERM EXPIRY ALERTS</h1>
+      <h1 className="text-2xl font-black text-[#263A29] mb-6 tracking-tighter uppercase">⚠️ SHORT-TERM EXPIRY ALERTS</h1>
       
       {expiringItems.length === 0 ? (
         <div className="p-10 bg-green-50 rounded-3xl text-center border-2 border-dashed border-green-200">
-          <p className="text-green-700 font-bold">All stock is fresh! No immediate action required.</p>
+          <p className="text-green-700 font-bold uppercase text-xs tracking-widest">All stock is fresh! No immediate action required.</p>
         </div>
       ) : (
         <div className="grid gap-4">
           {expiringItems.map(item => (
-            <div key={item.batchid} className="p-6 bg-white border-2 border-orange-100 rounded-3xl flex justify-between items-center shadow-sm">
+            <div key={item.batchid} className="p-6 bg-white border-2 border-orange-100 rounded-3xl flex justify-between items-center shadow-sm hover:border-orange-200 transition-colors">
               <div>
-                <h3 className="font-black text-lg text-[#263A29]">{item.products.productname}</h3>
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Batch: {item.batchnumber}</p>
+                {/* Updated to item.products.name */}
+                <h3 className="font-black text-lg text-[#263A29]">{item.products.name}</h3>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Batch Ref: {item.batchnumber}</p>
               </div>
               <div className="text-right">
-                <p className={`font-black ${new Date(item.expirydate) <= new Date() ? 'text-red-500' : 'text-orange-500'}`}>
+                <p className={`font-black text-sm uppercase tracking-tighter ${new Date(item.expirydate) <= new Date() ? 'text-red-500' : 'text-orange-500'}`}>
                   Expires: {item.expirydate}
                 </p>
-                <p className="text-sm font-medium text-gray-500">Qty Remaining: {item.remainingquantity}</p>
+                {/* Updated to item.remainingqty */}
+                <p className="text-[10px] font-black text-gray-400 uppercase mt-1">Qty Remaining: {item.remainingqty}</p>
               </div>
             </div>
           ))}

@@ -48,15 +48,29 @@ export default function InventoryCheck() {
       
       if (error) throw error;
 
-      // Filter the layout to match the current shop location
-      const formatted = data?.map(item => {
-        const product = item.batches?.products;
-        const correctLayout = product?.store_layouts?.find((l: any) => l.locationid === item.locationid);
-        return { ...item, layout: correctLayout };
+      // FIX: Normalize the data structure to handle Supabase array returns
+      const formatted = data?.map((item: any) => {
+        // Ensure batches is an object, not an array
+        const batchObj = Array.isArray(item.batches) ? item.batches[0] : item.batches;
+        // Ensure products is an object, not an array
+        const productObj = Array.isArray(batchObj?.products) ? batchObj.products[0] : batchObj?.products;
+        
+        // Find the specific layout for the branch this inventory item belongs to
+        const correctLayout = productObj?.store_layouts?.find(
+            (l: any) => l.locationid === item.locationid
+        );
+
+        return { 
+            ...item, 
+            displayBatch: batchObj,
+            displayProduct: productObj,
+            layout: correctLayout 
+        };
       });
 
       setInventoryItems(formatted || []);
     } catch (err) {
+      console.error(err);
       toast.error("Failed to sync with warehouse database");
     } finally {
       setLoading(false);
@@ -73,7 +87,6 @@ export default function InventoryCheck() {
     const userId = localStorage.getItem('userId');
 
     try {
-      // 1. Log to stock_movements (Audit Trail)
       const { error: logError } = await supabase
         .from('stock_movements')
         .insert([{
@@ -81,13 +94,12 @@ export default function InventoryCheck() {
           transactiontype: type.toLowerCase(), 
           quantity: 1,
           performedby: userId ? parseInt(userId) : 1,
-          notes: `Reason: ${reason} | Manual Overide`,
+          notes: `Reason: ${reason} | Manual Override`,
           transactiondate: new Date().toISOString()
         }]);
 
       if (logError) throw logError;
 
-      // 2. Update inventory (Single Source of Truth)
       const newQty = type === 'Return' ? selectedItem.quantity + 1 : selectedItem.quantity - 1;
       
       const { error: updateError } = await supabase
@@ -113,7 +125,7 @@ export default function InventoryCheck() {
     <div className="p-8 max-w-6xl mx-auto pb-40">
       <header className="mb-10">
         <h2 className="text-4xl font-black text-[#263A29] tracking-tighter uppercase">Inventory Intelligence</h2>
-        <p className="text-gray-400 font-bold text-xs uppercase tracking-widest mt-2 leading-relaxed">
+        <p className="text-gray-400 font-bold text-xs uppercase tracking-widest mt-2">
           Real-time branch synchronization & precise shelf mapping
         </p>
       </header>
@@ -122,7 +134,7 @@ export default function InventoryCheck() {
         <div className="relative flex-1">
           <input 
             className="w-full p-5 pl-14 rounded-2xl border-2 border-gray-100 outline-none focus:border-[#41644A] bg-white shadow-sm font-bold text-[#263A29] placeholder:text-gray-300"
-            placeholder="Search catalog by name (e.g. Milk, Apples)..."
+            placeholder="Search catalog by name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && findInventory()}
@@ -148,8 +160,9 @@ export default function InventoryCheck() {
                 <span className="text-[10px] font-black bg-[#263A29] text-white px-4 py-1.5 rounded-full uppercase tracking-widest">
                   {item.locations?.name}
                 </span>
-                <h3 className="text-2xl font-black text-[#263A29] mt-5 leading-tight">{item.batches?.products?.name}</h3>
-                <p className="text-[10px] font-mono text-gray-400 font-bold uppercase mt-1">Batch: #{item.batches?.batchnumber}</p>
+                {/* Updated to use normalized displayProduct and displayBatch */}
+                <h3 className="text-2xl font-black text-[#263A29] mt-5 leading-tight">{item.displayProduct?.name}</h3>
+                <p className="text-[10px] font-mono text-gray-400 font-bold uppercase mt-1">Batch: #{item.displayBatch?.batchnumber}</p>
                 
                 <div className="mt-5 flex gap-3">
                   <div className="bg-gray-100 px-3 py-1.5 rounded-xl flex items-center gap-2">
@@ -170,7 +183,6 @@ export default function InventoryCheck() {
           </div>
         ))}
 
-        {/* NOT FOUND MESSAGE - REMAINS IN GRID FORMAT */}
         {hasSearched && !loading && inventoryItems.length === 0 && (
           <div className="col-span-full py-24 text-center bg-white rounded-[45px] border-2 border-dashed border-gray-100 shadow-inner">
             <AlertCircle className="mx-auto text-gray-200 mb-4" size={64} />
@@ -178,7 +190,6 @@ export default function InventoryCheck() {
             <p className="text-gray-300 font-bold text-xs uppercase mt-2 tracking-widest">
               "{search}" does not exist in any branch or batch.
             </p>
-            <button onClick={() => setSearch('')} className="mt-6 text-[10px] font-black text-[#41644A] underline uppercase tracking-widest">Clear and try again</button>
           </div>
         )}
       </div>
@@ -189,8 +200,8 @@ export default function InventoryCheck() {
           <input 
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="MANDATORY: Describe why stock is changing (e.g. Broken packaging, Customer return)..."
-            className="flex-1 p-5 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#41644A] text-[#263A29] placeholder:text-gray-300"
+            placeholder="MANDATORY REASON: (e.g. Broken packaging, Customer return)..."
+            className="flex-1 p-5 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-[#41644A] text-[#263A29]"
           />
           <div className="flex gap-3 shrink-0">
             <button onClick={() => handleAdjustment('Damage')} disabled={!selectedItem || !reason} className="px-8 py-4 bg-red-50 text-red-600 rounded-2xl font-black uppercase text-[11px] tracking-widest border border-red-100 hover:bg-red-100 transition-all disabled:opacity-20 active:scale-95">

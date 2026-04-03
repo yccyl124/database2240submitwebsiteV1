@@ -14,8 +14,7 @@ export default function AuditLogViewer() {
     async function fetchLogs() {
       try {
         setLoading(true);
-        // Updated: Using Supabase relationship to join 'users' table directly 
-        // using the 'changedby' foreign key from your schema.
+        // Using the join defined in your schema
         const { data: logData, error: logError } = await supabase
           .from('auditlogs')
           .select(`
@@ -25,6 +24,7 @@ export default function AuditLogViewer() {
             oldvalues, 
             newvalues, 
             changedate,
+            changedby,
             staff:users!changedby (fullname)
           `)
           .order('changedate', { ascending: false });
@@ -35,11 +35,15 @@ export default function AuditLogViewer() {
           return;
         }
 
-        // Map the joined data so your JSX 'log.staffName' remains functional
-        const mappedLogs = logData?.map(log => ({
-          ...log,
-          staffName: log.staff?.fullname || `Staff #${log.changedby}`
-        }));
+        // FIX: Handle the case where Supabase returns 'staff' as an array
+        const mappedLogs = logData?.map(log => {
+          const staffData = Array.isArray(log.staff) ? log.staff[0] : log.staff;
+          
+          return {
+            ...log,
+            staffName: staffData?.fullname || `Staff #${log.changedby}`
+          };
+        });
 
         setLogs(mappedLogs || []);
       } catch (err) {

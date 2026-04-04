@@ -10,52 +10,49 @@ export default function PurchaseHistory() {
 
   useEffect(() => {
     async function fetchHistory() {
-  try {
-    setLoading(true);
-    const storedUserId = localStorage.getItem('userId');
-    console.log("Current User ID from LocalStorage:", storedUserId);
+      try {
+        setLoading(true);
+        const storedUserId = localStorage.getItem('userId');
+        console.log("Current User ID from LocalStorage:", storedUserId);
 
-    if (!storedUserId) {
-      console.error("No User ID found in LocalStorage. Are you logged in?");
-      return;
-    }
+        if (!storedUserId) {
+          console.error("No User ID found in LocalStorage. Are you logged in?");
+          return;
+        }
 
-    const { data, error } = await supabase
-      .from('sales_transactions')
-      .select(`
-        saleid, 
-        transactionnumber, 
-        created_at, 
-        totalprice, 
-        paymentmethod,
-        salesitems:sales_items (
-          quantity, 
-          unitprice, 
-          finalprice, 
-          batches (
-            products (
-              name
+        const { data, error } = await supabase
+          .from('sales_transactions')
+          .select(`
+            saleid, 
+            transactionnumber, 
+            created_at, 
+            totalprice, 
+            paymentmethod,
+            salesitems:sales_items (
+              quantity, 
+              unitprice, 
+              finalprice, 
+              batches (
+                products (
+                  name
+                )
+              )
             )
-          )
-        )
-      `)
-      .eq('customerid', parseInt(storedUserId)) // Ensure it's an integer
-      .order('created_at', { ascending: false });
+          `)
+          .eq('customerid', parseInt(storedUserId)) 
+          .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error("Supabase Error:", error.message);
-      console.error("Error Details:", error.details);
-      console.error("Error Hint:", error.hint);
-    } else {
-      console.log("Data retrieved successfully:", data);
-      setHistory(data || []);
+        if (error) {
+          console.error("Supabase Error:", error.message);
+        } else {
+          setHistory(data || []);
+        }
+      } catch (err) {
+        console.error("Unexpected Script Error:", err);
+      } finally {
+        setLoading(false);
+      }
     }
-  } catch (err) {
-    console.error("Unexpected Script Error:", err);
-  } finally {
-    setLoading(false);
-  }
-}
     fetchHistory();
   }, []);
 
@@ -68,7 +65,7 @@ export default function PurchaseHistory() {
 
       {loading ? (
         <div className="animate-pulse space-y-4">
-          {[1, 2, 3].map(i => <div key={i} className="h-16 bg-gray-50 rounded-2xl" />)}
+          {[1, 2, 3].map(i => <div key={i} className="h-16 bg-brand-bg rounded-2xl" />)}
         </div>
       ) : (
         <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden">
@@ -124,7 +121,10 @@ export default function PurchaseHistory() {
               {selectedOrder.salesitems.map((item: any, idx: number) => (
                 <div key={idx} className="flex justify-between items-center">
                   <div>
-                    <p className="font-bold text-[#263A29]">{item.batches.products.productname}</p>
+                    {/* FIXED: Changed .productname to .name to match your schema join results */}
+                    <p className="font-bold text-[#263A29]">
+                      {item.batches?.products?.name || "Premium Item"}
+                    </p>
                     <p className="text-xs text-[#41644A]">Qty: {item.quantity} × ${Number(item.unitprice).toFixed(2)}</p>
                   </div>
                   <p className="font-bold text-[#263A29]">${Number(item.finalprice).toFixed(2)}</p>

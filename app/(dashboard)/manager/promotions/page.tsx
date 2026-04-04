@@ -192,7 +192,7 @@ export default function PromotionsPage() {
                 <tr className="text-[10px] font-black uppercase tracking-widest text-[#41644A]">
                   <th className="px-10 py-6">Product Item</th>
                   <th className="px-5 py-6 text-center">Markdown</th>
-                  <th className="px-10 py-6 text-right">Validity</th>
+                  <th className="px-11 py-6 text-right">Validity</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">

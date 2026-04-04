@@ -30,16 +30,16 @@ export default function Sidebar() {
       // ADDED: The proposal explicitly requires "Checkout Operations" for Cashiers to scan barcodes, deduct stock, and process Octopus/AlipayHK/PayMe[cite: 41].
       { name: 'Home', icon: '🏠', path: '/staff' },
       { name: 'Checkout POS', icon: '🛒', path: '/staff/checkout' }, 
+      { name: 'Inventory Check', icon: '📦', path: '/staff/inventory' },
       { name: 'Transaction logs', icon: '✅', path: '/staff/tasklist' },
-      { name: 'Inventory Check', icon: '📦', path: '/staff/inventory' }, // This handles the "Customer Support" stock/aisle queries[cite: 42].
       { name: 'Expiry Alerts', icon: '⌛', path: '/staff/expiry' }, 
     ],
     'manager': [
       { name: 'Sales Analytics', icon: '📈', path: '/manager' }, // Renamed from Overview to match daily/weekly/monthly sales trends.
+      { name: 'Staff Control', icon: '👥', path: '/manager/staff' },// Performance tracking and cashier volume monitoring.
       { name: 'Promotions', icon: '✨', path: '/manager/promotions' }, // ADDED: Flash sales and markdown management for expiring/overstock goods.
       { name: 'Stock Adjustments', icon: '✍️', path: '/manager/adjustments' }, // Required: record stock changes with mandatory reason codes (theft, damage).
       { name: 'Audit Logs', icon: '🕵️‍♂️', path: '/manager/audit' }, // Reviews cashier activity metrics and staff accuracy.
-      { name: 'Staff Control', icon: '👥', path: '/manager/staff' } // Performance tracking and cashier volume monitoring.
     ],
     'restocker': [
       { name: 'Logistics Command', icon: '🏗️', path: '/restocker' }, // Handles stock movements and inter-store shipments[cite: 53].

@@ -52,12 +52,12 @@ export default function Sidebar() {
     'customer': [
       { name: 'Home', icon: '🏠', path: '/customer' },
       { name: 'Shop Products', icon: '🛒', path: '/customer/search' },
-      { name: 'Shopping List', icon: '📝', path: '/customer/list' },
-      { name: 'Active Rewards', icon: '🎁', path: '/customer/promotions' },
       { name: 'Nearest Store', icon: '📍', path: '/customer/nearest-store' },
+      { name: 'Shopping List', icon: '📝', path: '/customer/list' },
       { name: 'My Wishlist', icon: '✨', path: '/customer/wishlist' },
-      { name: 'Order History', icon: '📜', path: '/customer/history' },
+      { name: 'Active Rewards', icon: '🎁', path: '/customer/promotions' },
       { name: 'Loyalty Rewards', icon: '💎', path: '/customer/loyalty' },
+      { name: 'Order History', icon: '📜', path: '/customer/history' },
     ],
   };
 

@@ -17,21 +17,37 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const { data: user, error } = await supabase
+      // --- STEP A: CUSTOM TABLE CHECK ---
+      // Fetch the user data from your 'public.users' table
+      const { data: user, error: dbError } = await supabase
         .from('users')
         .select('userid, email, passwordhash, role')
         .eq('email', email.trim())
         .single();
 
-      if (error || !user) {
-        throw new Error("User account not found.");
+      if (dbError || !user) {
+        throw new Error("Account not found in database.");
       }
       
+      // Manual password validation (matching your passwordhash column)
       if (String(user.passwordhash).trim() !== password.trim()) {
         throw new Error("Incorrect password.");
       }
 
-      // Save Member Session
+      // --- STEP B: SUPABASE AUTH ACTIVATION (For RLS) ---
+      // This "signs in" the session so RLS policies can see the user's email/ID
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password.trim(),
+      });
+
+      // Note: We proceed even if Auth fails for local testing, 
+      // but RLS will only work if this step succeeds.
+      if (authError) {
+        console.warn("RLS Auth Warning:", authError.message);
+      }
+
+      // --- STEP C: SAVE SESSION & REDIRECT ---
       localStorage.setItem('role', user.role);
       localStorage.setItem('userEmail', user.email);
       localStorage.setItem('userId', user.userid.toString());
@@ -56,15 +72,11 @@ export default function LoginPage() {
     }
   };
 
-  // --- FIXED: Handle Guest Access and Redirect to Main Page ---
   const handleGuestEntry = () => {
     localStorage.setItem('role', 'guest');
-    localStorage.removeItem('userId'); // Ensure clean state
+    localStorage.removeItem('userId');
     localStorage.removeItem('userEmail');
-    
     toast.success("Entering as Guest");
-    
-    // Redirect to the original main landing page
     router.push('/');
     router.refresh();
   };
@@ -104,7 +116,7 @@ export default function LoginPage() {
                 type="email" 
                 placeholder="email@example.com" 
                 className="w-full p-4 bg-[#f8f9f7] rounded-2xl outline-none border border-transparent focus:border-[#41644A]/30 transition-all text-[#263A29] text-sm font-semibold"
-                value={email || ''} 
+                value={email} 
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
@@ -116,15 +128,12 @@ export default function LoginPage() {
                 type="password" 
                 placeholder="••••••••" 
                 className="w-full p-4 bg-[#f8f9f7] rounded-2xl outline-none border border-transparent focus:border-[#41644A]/30 transition-all text-[#263A29] text-sm font-semibold"
-                value={password || ''}
+                value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
               <div className="flex justify-end">
-                <Link 
-                    href="/auth/forgot-password" 
-                    className="text-[10px] font-bold text-[#41644A] hover:underline"
-                >
+                <Link href="/auth/forgot-password" size="sm" className="text-[10px] font-bold text-[#41644A] hover:underline">
                     Forgot password?
                 </Link>
               </div>

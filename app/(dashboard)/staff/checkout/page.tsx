@@ -93,17 +93,56 @@ export default function CheckoutPOS() {
     if (cart.length === 0) return;
     const staffId = localStorage.getItem('userId') || 1;
     setIsProcessing(true);
+
     try {
-      const { data: txnData, error: txnError } = await supabase.from('sales_transactions').insert([{ transactionnumber: `TRX-${Date.now()}`, locationid: parseInt(selectedLocationId.toString()), customerid: customer?.userid || null, cashierid: parseInt(staffId.toString()), paymentmethod: methodId, totalprice: total }]).select().single();
+      // 1. INSERT INTO sales_transactions
+      const { data: txnData, error: txnError } = await supabase
+        .from('sales_transactions')
+        .insert([{ 
+            transactionnumber: `TRX-${Date.now()}`, 
+            locationid: parseInt(selectedLocationId.toString()), 
+            customerid: customer?.userid || null, 
+            cashierid: parseInt(staffId.toString()), 
+            paymentmethod: methodId, 
+            totalprice: total 
+        }])
+        .select().single();
+
       if (txnError) throw new Error(txnError.message);
+
+      // 2. INSERT INTO sales_items AND UPDATE batches (Minus Quantity)
       for (const item of cart) {
-        await supabase.from('sales_items').insert([{ saleid: txnData.saleid, batchid: item.batchid, quantity: item.qty, unitprice: item.currentprice, finalprice: item.currentprice * item.qty, discountid: appliedPromo?.discountid || null }]);
-        await supabase.from('batches').update({ remainingqty: item.available - item.qty }).eq('batchid', item.batchid);
+        // Create the record for the item sold
+        await supabase.from('sales_items').insert([{ 
+            saleid: txnData.saleid, 
+            batchid: item.batchid, 
+            quantity: item.qty, 
+            unitprice: item.currentprice, 
+            finalprice: item.currentprice * item.qty, 
+            discountid: appliedPromo?.discountid || null 
+        }]);
+
+        // Deduct the quantity from the batch inventory
+        await supabase
+            .from('batches')
+            .update({ remainingqty: item.available - item.qty }) // MINUS QTY
+            .eq('batchid', item.batchid);
       }
-      if (customer?.userid) { await supabase.from('users').update({ loyalty_points: (customer.loyalty_points || 0) + Math.floor(total) }).eq('userid', customer.userid); }
-      toast.success("Transaction Success");
+
+      // 3. UPDATE LOYALTY POINTS (If member)
+      if (customer?.userid) { 
+        await supabase.from('users').update({ 
+            loyalty_points: (customer.loyalty_points || 0) + Math.floor(total) 
+        }).eq('userid', customer.userid); 
+      }
+
+      toast.success("Transaction Success & Inventory Updated");
       setCart([]); setCustomer(null); setCustomerPhone(''); setAppliedPromo(null);
-    } catch (err: any) { toast.error(`Sale Failed: ${err.message}`); } finally { setIsProcessing(false); }
+    } catch (err: any) { 
+        toast.error(`Sale Failed: ${err.message}`); 
+    } finally { 
+        setIsProcessing(false); 
+    }
   };
 
   return (

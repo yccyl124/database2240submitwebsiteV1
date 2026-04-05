@@ -53,7 +53,7 @@ export default function LoginPage() {
       
       const roleKey = user.role.toLowerCase().trim();
       const paths: Record<string, string> = {
-        'restocker': '/restocker',
+        'inventory': '/restocker',
         'manager': '/manager',
         'staff': '/staff',
         'customer': '/customer',

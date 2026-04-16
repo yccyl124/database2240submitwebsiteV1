@@ -150,7 +150,7 @@ export default function CheckoutPOS() {
     : 0;
   const total = Math.max(0, subtotal - discountAmount);
 
-  // --- REFINED PROCESS SALE (ATOMIC UPDATES) ---
+  // --- ATOMIC INVENTORY DEDUCTION LOGIC ---
   const processSale = async (methodId: string) => {
     if (cart.length === 0) return;
     const staffId = localStorage.getItem('userId');
@@ -159,7 +159,7 @@ export default function CheckoutPOS() {
     setIsProcessing(true);
 
     try {
-      // 1. Create Transaction Record
+      // 1. Create the Transaction Record
       const { data: txn, error: txnError } = await supabase
         .from('sales_transactions')
         .insert([{
@@ -174,9 +174,10 @@ export default function CheckoutPOS() {
 
       if (txnError) throw txnError;
 
-      // 2. Loop through cart for multi-table updates
+      // 2. Loop through cart to subtract stock from two different tables
       for (const item of cart) {
-        // a. Insert Sale Item
+        
+        // A. Create record of the item sold
         await supabase.from('sales_items').insert([{
           saleid: txn.saleid,
           batchid: item.batchid,
@@ -186,40 +187,45 @@ export default function CheckoutPOS() {
           discountid: appliedPromo?.discountid || null
         }]);
 
-        // b. Deduct from Batches (Global)
-        await supabase.from('batches')
+        // B. MINUS FROM GLOBAL STOCK (Batches Table)
+        // This reduces the overall count for that specific batch
+        const { error: batchErr } = await supabase.from('batches')
           .update({ remainingqty: item.available - item.qty })
           .eq('batchid', item.batchid);
+        
+        if (batchErr) console.error("Batch update failed", batchErr);
 
-        // c. Deduct from Inventory (Specific Branch)
-        const { data: inv } = await supabase.from('inventory')
+        // C. MINUS FROM BRANCH INVENTORY (Inventory Table)
+        // This reduces the stock only for the current selected store
+        const { data: invData } = await supabase.from('inventory')
           .select('quantity')
           .eq('batchid', item.batchid)
           .eq('locationid', selectedLocationId)
           .single();
         
-        if (inv) {
+        if (invData) {
+          const newBranchQty = invData.quantity - item.qty;
           await supabase.from('inventory')
-            .update({ quantity: inv.quantity - item.qty })
+            .update({ quantity: newBranchQty })
             .eq('batchid', item.batchid)
             .eq('locationid', selectedLocationId);
         }
       }
 
-      // 3. Update Member Loyalty
+      // 3. Update Member Loyalty Points (if applicable)
       if (customer?.userid) {
         await supabase.from('users')
           .update({ loyalty_points: (customer.loyalty_points || 0) + Math.floor(total) })
           .eq('userid', customer.userid);
       }
 
-      // 4. RESET STATE TO NULL
+      // 4. Success - Clear everything
       setCart([]);
       setCustomer(null);
       setCustomerPhone('');
       setAppliedPromo(null);
       setSearchQuery('');
-      toast.success("Sale Recorded & Inventory Synced!");
+      toast.success("Transaction Complete: Inventory Updated");
 
     } catch (err: any) {
       toast.error(`Sale Failed: ${err.message}`);

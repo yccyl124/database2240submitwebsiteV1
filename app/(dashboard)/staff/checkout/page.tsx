@@ -212,7 +212,7 @@ export default function CheckoutPOS() {
         }
       }
 
-      // 3. Update Member Loyalty Points (if applicable)
+      // 3. Update Member Loyalty
       if (customer?.userid) {
         await supabase.from('users')
           .update({ loyalty_points: (customer.loyalty_points || 0) + Math.floor(total) })

@@ -168,7 +168,7 @@ export default function MainPage() {
                   {/* SHOPPING LIST BUTTON REMOVED FOR GUESTS - EXCLUSIVE FOR MEMBERS */}
                   {isLoggedIn && (
                     <button className="w-full bg-[#263A29] text-white py-4 rounded-2xl font-bold uppercase text-xs tracking-widest">
-                       Add to shopping list
+                       Register to unlock more functions!!
                     </button>
                   )}
                 </div>

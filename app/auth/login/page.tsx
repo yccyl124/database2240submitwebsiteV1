@@ -10,11 +10,13 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(''); // Added state for the error message block
   const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setErrorMsg(''); // Reset error message on new attempt
 
     try {
       // --- STEP A: CUSTOM TABLE CHECK ---
@@ -25,16 +27,15 @@ export default function LoginPage() {
         .single();
 
       if (dbError || !user) {
-        throw new Error("Account not found in database.");
+        throw new Error("Account not found");
       }
       
       // Manual password validation
       if (String(user.passwordhash).trim() !== password.trim()) {
-        throw new Error("Incorrect password.");
+        throw new Error("Incorrect password");
       }
 
       // --- STEP B: SUPABASE AUTH ACTIVATION (For RLS) ---
-      // Sign in the session so RLS policies can see the user's JWT
       const { error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password.trim(),
@@ -64,7 +65,9 @@ export default function LoginPage() {
       router.refresh();
 
     } catch (err: any) {
-      toast.error(err.message || "An unexpected error occurred");
+      // Set the specific error message requested
+      setErrorMsg("Input incorrect please check and login again, enter the correct password or user id");
+      toast.error("Login failed");
       setLoading(false);
     }
   };
@@ -107,6 +110,13 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
+            {/* ERROR MESSAGE BLOCK */}
+            {errorMsg && (
+              <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-2xl text-xs font-bold animate-in fade-in slide-in-from-top-1">
+                {errorMsg}
+              </div>
+            )}
+
             <div className="space-y-1">
               <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Email Address</label>
               <input 
@@ -130,7 +140,6 @@ export default function LoginPage() {
                 required
               />
               <div className="flex justify-end">
-                {/* FIX: Removed invalid 'size' prop */}
                 <Link href="/auth/forgot-password" className="text-[10px] font-bold text-[#41644A] hover:underline">
                     Forgot password?
                 </Link>

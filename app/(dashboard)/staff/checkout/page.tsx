@@ -158,27 +158,28 @@ if (!staffIdStr) return toast.error("Cashier ID not found. Re-login required.");
 setIsProcessing(true);
 
 try {
-  const staffId = parseInt(staffIdStr);
-  const locId = parseInt(selectedLocationId.toString());
+  const staffIdNum = parseInt(staffIdStr);
+  const locIdNum = parseInt(selectedLocationId.toString());
 
-  // 1. Create Transaction Record
+  // 1. 新增交易主記錄
   const { data: txn, error: txnError } = await supabase
     .from('sales_transactions')
     .insert([{
       transactionnumber: `TRX-${Date.now()}`,
-      locationid: locId,
+      locationid: locIdNum,
       customerid: customer?.userid || null,
-      cashierid: staffId,
+      cashierid: staffIdNum,
       paymentmethod: methodId,
       totalprice: total
     }])
-    .select().single();
+    .select()
+    .single();
 
   if (txnError) throw new Error(`TXN Error: ${txnError.message}`);
 
-  // 2. Loop through cart for multi-table updates
+  // 2. 逐件商品處理
   for (const item of cart) {
-    // a. Insert Sale Item
+    // a. 新增銷售細項
     const { error: itemErr } = await supabase.from('sales_items').insert([{
       saleid: txn.saleid,
       batchid: item.batchid,
@@ -187,63 +188,60 @@ try {
       finalprice: item.currentprice * item.qty,
       discountid: appliedPromo?.discountid || null
     }]);
+    
     if (itemErr) throw new Error(`Item Error: ${itemErr.message}`);
 
-    // b. Deduct from Batches (Global)
-    const { data: bData, error: bFErr } = await supabase.from('batches').select('remainingqty').eq('batchid', item.batchid).single();
-    if (bFErr) throw new Error(`Batch Fetch Error: ${bFErr.message}`);
-    
-    const { error: bUpdErr } = await supabase.from('batches')
-      .update({ remainingqty: bData.remainingqty - item.qty })
-      .eq('batchid', item.batchid);
-    if (bUpdErr) throw new Error(`Batch Update Error (Check RLS): ${bUpdErr.message}`);
-
-    // c. Deduct from Inventory (Specific Branch)
-    const { data: inv, error: invFErr } = await supabase.from('inventory')
-      .select('inventoryid, quantity')
-      .eq('batchid', item.batchid)
-      .eq('locationid', locId)
-      .maybeSingle();
-    
-    if (invFErr) throw new Error(`Inv Fetch Error: ${invFErr.message}`);
-
-    if (inv) {
-      const { error: invUpdErr } = await supabase.from('inventory')
-        .update({ quantity: inv.quantity - item.qty })
-        .eq('inventoryid', inv.inventoryid);
-      if (invUpdErr) throw new Error(`Inv Update Error (Check RLS): ${invUpdErr.message}`);
+    // b. 扣減 Batch 全局庫存
+    const { data: bData } = await supabase.from('batches').select('remainingqty').eq('batchid', item.batchid).single();
+    if (bData) {
+      await supabase.from('batches')
+        .update({ remainingqty: bData.remainingqty - item.qty })
+        .eq('batchid', item.batchid);
     }
 
-    // d. Log Stock Movement
-    const { error: movErr } = await supabase.from('stock_movements').insert([{
+    // c. 扣減 Inventory 分店庫存
+    const { data: inv } = await supabase.from('inventory')
+      .select('inventoryid, quantity')
+      .eq('batchid', item.batchid)
+      .eq('locationid', locIdNum)
+      .maybeSingle();
+    
+    if (inv) {
+      await supabase.from('inventory')
+        .update({ quantity: inv.quantity - item.qty })
+        .eq('inventoryid', inv.inventoryid);
+    }
+
+    // d. 寫入 Stock Movements 紀錄
+    await supabase.from('stock_movements').insert([{
       batchid: item.batchid,
       transactiontype: 'sale', 
-      from_locationid: locId,
+      from_locationid: locIdNum,
       quantity: item.qty,
-      performedby: staffId,
+      performedby: staffIdNum,
       notes: `Sale #${txn.transactionnumber}`
     }]);
-    if (movErr) throw new Error(`Movement Log Error (Check RLS): ${movErr.message}`);
   }
 
-  // 3. Update Member Loyalty
+  // 3. 更新會員積分
   if (customer?.userid) {
     await supabase.from('users')
       .update({ loyalty_points: (customer.loyalty_points || 0) + Math.floor(total) })
       .eq('userid', customer.userid);
   }
 
+  // 成功後清空介面
   setCart([]);
   setCustomer(null);
   setCustomerPhone('');
   setAppliedPromo(null);
   setManualPromoCode("");
   setSearchQuery('');
-  toast.success("Sale Recorded & Inventory Updated!");
+  toast.success("Sale Recorded & Inventory Synced!");
 
 } catch (err: any) {
-  console.error("Sale Process Detail Error:", err);
-  toast.error(`${err.message || "Database Error"}`);
+  console.error("Sale Fail Debug:", err);
+  toast.error(`${err.message || "Sale Process Failed"}`);
 } finally {
   setIsProcessing(false);
 }

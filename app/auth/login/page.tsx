@@ -10,49 +10,47 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(''); // Added state for the error message block
+  const [errorMsg, setErrorMsg] = useState(''); // 錯誤訊息狀態
   const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setErrorMsg(''); // Reset error message on new attempt
+    setErrorMsg('');
 
     try {
-      // --- STEP A: CUSTOM TABLE CHECK ---
-      const { data: user, error: dbError } = await supabase
-        .from('users')
-        .select('userid, email, passwordhash, role')
-        .eq('email', email.trim())
-        .single();
-
-      if (dbError || !user) {
-        throw new Error("Account not found");
-      }
-      
-      // Manual password validation
-      if (String(user.passwordhash).trim() !== password.trim()) {
-        throw new Error("Incorrect password");
-      }
-
-      // --- STEP B: SUPABASE AUTH ACTIVATION (For RLS) ---
-      const { error: authError } = await supabase.auth.signInWithPassword({
+      // --- STEP A: 使用 Supabase Auth 進行真正登入 ---
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password.trim(),
       });
 
+      // 如果 Auth 驗證失敗 (密碼錯誤或帳號不存在)
       if (authError) {
-        console.warn("RLS Auth Layer Warning:", authError.message);
+        throw new Error("input incorrect please check and login again, enter the correct password or user id");
       }
 
-      // --- STEP C: SAVE SESSION & REDIRECT ---
-      localStorage.setItem('role', user.role);
-      localStorage.setItem('userEmail', user.email);
-      localStorage.setItem('userId', user.userid.toString());
+      // --- STEP B: 登入成功後，從 users 表查角色 ---
+      // 通常建議用 authData.user.id 來查詢，這裡沿用你的 email 查詢邏輯
+      const { data: userProfile, error: dbError } = await supabase
+        .from('users')
+        .select('userid, email, role')
+        .eq('email', email.trim())
+        .single();
+
+      if (dbError || !userProfile) {
+        // 如果 Auth 成功但資料表沒人，可能是資料不同步
+        throw new Error("User profile not found in database.");
+      }
+
+      // --- STEP C: 儲存 Session 並跳轉 ---
+      localStorage.setItem('role', userProfile.role);
+      localStorage.setItem('userEmail', userProfile.email);
+      localStorage.setItem('userId', userProfile.userid.toString());
 
       toast.success(`Welcome back!`);
       
-      const roleKey = user.role.toLowerCase().trim();
+      const roleKey = userProfile.role.toLowerCase().trim();
       const paths: Record<string, string> = {
         'inventory': '/restocker',
         'manager': '/manager',
@@ -65,8 +63,11 @@ export default function LoginPage() {
       router.refresh();
 
     } catch (err: any) {
-      // Set the specific error message requested
-      setErrorMsg("Input incorrect please check and login again, enter the correct password or user id");
+      // 這裡統一顯示你要求的錯誤訊息
+      setErrorMsg(err.message.includes("input incorrect") 
+        ? err.message 
+        : "An unexpected error occurred. Please try again.");
+      
       toast.error("Login failed");
       setLoading(false);
     }
@@ -110,9 +111,10 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
-            {/* ERROR MESSAGE BLOCK */}
+            
+            {/* 錯誤訊息區塊 */}
             {errorMsg && (
-              <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-2xl text-xs font-bold animate-in fade-in slide-in-from-top-1">
+              <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-2xl text-xs font-bold animate-pulse">
                 {errorMsg}
               </div>
             )}

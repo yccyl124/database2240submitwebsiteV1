@@ -55,12 +55,10 @@ export default function SearchStockPage() {
         setLoading(true);
 
         // Fetch basic product info and layout (aisle/shelf)
-        const { data: productsData } = await supabase.from('products').select(`
-            productid, 
-            name, 
-            currentprice,
-            store_layouts (aisle_number, shelf_number, locationid)
-          `);
+        const {  data: productsData } = await supabase
+  .from('products')
+  .select('productid, name, currentprice, store_layouts(aisle_number, shelf_number, locationid)');
+
 
         // Fetch inventory via batches
         let invQuery = supabase.from('inventory').select(`
@@ -93,7 +91,7 @@ export default function SearchStockPage() {
             aisle: layout?.aisle_number || 'N/A',
             shelf: layout?.shelf_number || 'N/A'
           };
-        }).filter(p => p.totalStock > 0);
+        });
 
         setProducts(merged || []);
       } catch (error) {

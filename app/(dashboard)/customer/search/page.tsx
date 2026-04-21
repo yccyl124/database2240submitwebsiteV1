@@ -16,10 +16,8 @@ export default function SearchStockPage() {
   const [loading, setLoading] = useState(true);
   const [customerId, setCustomerId] = useState<number | null>(null);
 
-  // 1. INITIAL LOAD (Locations/Stores, Discounts, User ID)
   useEffect(() => {
     async function init() {
-      // New: locations table where type is 'store'
       const { data: storeData } = await supabase
         .from('locations')
         .select('locationid, name')
@@ -33,8 +31,7 @@ export default function SearchStockPage() {
         .limit(1);
       if (discountData?.[0]) setActiveDiscount(discountData[0]);
 
-      // New: users table and userid column
-      const { data: user } = await supabase.from('users').select('userid').limit(1).single();
+      const { data: user } = await supabase.from('users').select('userid').limit(1).maybeSingle();
       if (user) setCustomerId(user.userid);
 
       const savedCart = localStorage.getItem('active_cart');
@@ -43,50 +40,42 @@ export default function SearchStockPage() {
     init();
   }, []);
 
-  // 2. SAVE CART TO MEMORY
   useEffect(() => {
     localStorage.setItem('active_cart', JSON.stringify(cart));
   }, [cart]);
 
-  // 3. FETCH INVENTORY & LAYOUT
+  // 3. FETCH INVENTORY & LAYOUT (Concept matched to CheckoutPOS)
   useEffect(() => {
     async function fetchStoreData() {
       try {
         setLoading(true);
 
-        // Fetch basic product info and layout (aisle/shelf)
-        const {  data: productsData } = await supabase
-  .from('products')
-  .select('productid, name, currentprice, store_layouts(aisle_number, shelf_number, locationid)');
-
-
-        // Fetch inventory via batches
-        let invQuery = supabase.from('inventory').select(`
-            quantity, 
-            locationid, 
-            batches!inner(productid)
+        /** 
+         * CONCEPT CHANGE: 
+         * We now use batches!inner(remainingqty) directly in the product select, 
+         * exactly like your CheckoutPOS search query.
+         */
+        const { data: productsData } = await supabase
+          .from('products')
+          .select(`
+            productid, 
+            name, 
+            currentprice, 
+            store_layouts (aisle_number, shelf_number, locationid),
+            batches!inner (remainingqty)
           `);
-        
-        if (selectedStore !== 'ALL') {
-          invQuery = invQuery.eq('locationid', selectedStore);
-        }
-        
-        const { data: invData } = await invQuery;
 
-        // Merge logic to keep your UI variables (productname, aisle, shelf) working
         const merged = productsData?.map((product: any) => {
-          // Calculate total stock for this product across filtered locations
-          const productInv = invData?.filter((inv: any) => inv.batches?.productid === product.productid) || [];
-          const totalStock = productInv.reduce((sum: number, item: any) => sum + item.quantity, 0);
+          // Concept from POS: Sum remainingqty from the batches array
+          const totalStock = product.batches?.reduce((sum: number, b: any) => sum + b.remainingqty, 0) || 0;
           
-          // Get layout for the specific selected store, or default to first found
           const layout = selectedStore === 'ALL' 
             ? product.store_layouts?.[0] 
             : product.store_layouts?.find((l: any) => l.locationid === parseInt(selectedStore));
 
           return { 
             ...product,
-            productname: product.name, // Map 'name' to 'productname' for your JSX
+            productname: product.name, 
             totalStock,
             aisle: layout?.aisle_number || 'N/A',
             shelf: layout?.shelf_number || 'N/A'
@@ -103,7 +92,6 @@ export default function SearchStockPage() {
     if (stores.length > 0 || selectedStore === 'ALL') fetchStoreData();
   }, [selectedStore, stores]);
 
-  // CART LOGIC
   const addToCart = (product: any) => {
     const existing = cart.find(item => item.productid === product.productid);
     if (existing) {
@@ -122,7 +110,6 @@ export default function SearchStockPage() {
 
   return (
     <div className="relative min-h-screen bg-[#FBFBFB] p-4 md:p-8">
-      
       {/* --- CART OVERLAY SIDEBAR --- */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
@@ -132,7 +119,6 @@ export default function SearchStockPage() {
               <h2 className="text-2xl font-black text-[#263A29]">YOUR TRIP</h2>
               <button onClick={() => setIsCartOpen(false)}><X /></button>
             </div>
-
             <div className="flex-1 overflow-y-auto space-y-4">
               {cart.length === 0 && <p className="text-gray-400 italic text-center py-10">Your list is empty.</p>}
               {cart.map(item => (
@@ -145,7 +131,6 @@ export default function SearchStockPage() {
                 </div>
               ))}
             </div>
-
             <div className="pt-6 border-t border-gray-100">
               <div className="flex justify-between mb-4 font-black text-[#263A29]">
                 <span>TOTAL ESTIMATE</span>
@@ -166,10 +151,9 @@ export default function SearchStockPage() {
       <div className="max-w-7xl mx-auto space-y-8">
         <header className="flex justify-between items-start">
           <div>
-            <h1 className="text-4xl font-black text-[#263A29] tracking-tighter">SMART SEARCH</h1>
+            <h1 className="text-4xl font-black text-[#263A29] tracking-tighter uppercase">Smart Search</h1>
             <p className="text-gray-400 font-bold text-xs uppercase tracking-widest">Find inventory & build your list</p>
           </div>
-          
           <button 
             onClick={() => setIsCartOpen(true)}
             className="relative bg-white p-4 rounded-2xl shadow-xl border border-gray-100 hover:scale-105 transition-transform"
@@ -212,17 +196,13 @@ export default function SearchStockPage() {
             {filteredProducts.map((item) => (
               <div key={item.productid} className="p-8 bg-white border border-gray-100 rounded-[40px] shadow-sm hover:shadow-2xl transition-all group">
                 <div className="flex justify-between items-start mb-6">
-                  <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
-                    📦
-                  </div>
-                  <div className="bg-green-50 px-3 py-1 rounded-full text-[9px] font-black text-green-600 uppercase">
+                  <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">📦</div>
+                  <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase ${item.totalStock > 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
                     {item.totalStock} in stock
                   </div>
                 </div>
-
                 <h4 className="font-black text-xl text-[#263A29]">{item.productname}</h4>
                 <p className="text-[#41644A] font-black text-2xl mt-1">${item.currentprice}</p>
-                
                 <div className="mt-6 pt-6 border-t border-gray-50 flex justify-between items-center">
                   <div>
                     <p className="text-[8px] font-black text-gray-400 uppercase">Aisle {item.aisle}</p>

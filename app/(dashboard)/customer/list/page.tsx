@@ -18,7 +18,6 @@ export default function UnifiedShoppingPage() {
 
   useEffect(() => {
     async function init() {
-      // 1. Get User ID from new 'users' table (using the ID from login)
       const storedId = localStorage.getItem('userId');
       if (storedId) {
         const numericId = parseInt(storedId);
@@ -26,7 +25,6 @@ export default function UnifiedShoppingPage() {
         fetchWishlist(numericId);
       }
 
-      // 2. Load Daily Trip from Browser Memory
       const saved = localStorage.getItem('shopping_list');
       if (saved) setDailyList(JSON.parse(saved));
     }
@@ -39,42 +37,50 @@ export default function UnifiedShoppingPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Updated: Smart Search Logic using new schema column names
+  // 1. UPDATED SEARCH: Using POS Batch Extraction Concept
   useEffect(() => {
     const searchDb = async () => {
       if (searchTerm.length < 2) {
         setSuggestions([]);
         return;
       }
+      
       const { data } = await supabase
         .from('products')
         .select(`
           productid, 
-          productname:name, 
+          name, 
           currentprice,
-          store_layouts (aisle_number)
+          store_layouts (aisle_number),
+          batches!inner (remainingqty)
         `)
         .ilike('name', `%${searchTerm}%`)
         .limit(5);
       
-      setSuggestions(data || []);
+      // Map data to include the POS stock concept
+      const formatted = data?.map(p => ({
+        ...p,
+        productname: p.name,
+        totalStock: p.batches?.reduce((sum: number, b: any) => sum + b.remainingqty, 0) || 0
+      }));
+      
+      setSuggestions(formatted || []);
     };
 
     const timer = setTimeout(searchDb, 300);
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  // Save Daily Trip to LocalStorage
   useEffect(() => {
     if (dailyList.length > 0) {
       localStorage.setItem('shopping_list', JSON.stringify(dailyList));
     }
   }, [dailyList]);
 
+  // 2. UPDATED WISHLIST: Single hierarchical fetch
   async function fetchWishlist(userId: number) {
     setLoading(true);
     try {
-      // Updated: fetch from user_collections where list_type is wishlist
       const { data } = await supabase
         .from('user_collections')
         .select(`
@@ -83,7 +89,8 @@ export default function UnifiedShoppingPage() {
           products (
             name, 
             currentprice, 
-            store_layouts (aisle_number)
+            store_layouts (aisle_number),
+            batches!inner (remainingqty)
           )
         `)
         .eq('userid', userId)
@@ -91,17 +98,11 @@ export default function UnifiedShoppingPage() {
 
       if (!data) return;
 
-      const productIds = data.map(item => item.productid);
-      const { data: invData } = await supabase
-        .from('inventory')
-        .select('quantity, batches!inner(productid)')
-        .in('batches.productid', productIds);
-
-      const formatted = data.map(item => {
-        const stock = invData?.filter((inv: any) => inv.batches?.productid === item.productid)
-                              .reduce((sum, inv) => sum + inv.quantity, 0) || 0;
+      const formatted = data.map((item: any) => {
+        const productObj = item.products;
+        // Sum stock from batches extracted via the POS concept
+        const stock = productObj?.batches?.reduce((sum: number, b: any) => sum + b.remainingqty, 0) || 0;
         
-        const productObj: any = item.products;
         return {
           wishlistId: item.collectionid,
           productId: item.productid,
@@ -113,6 +114,8 @@ export default function UnifiedShoppingPage() {
       });
 
       setWishlist(formatted);
+    } catch (err) {
+      console.error("Wishlist error:", err);
     } finally {
       setLoading(false);
     }
@@ -121,8 +124,6 @@ export default function UnifiedShoppingPage() {
   const addToDaily = (product: any) => {
     const pId = product.productid || product.productId;
     const isWishlist = wishlist.find(w => w.productId === pId);
-    
-    // Extract location from new layout path or existing mapping
     const locAisle = product.aisle || product.store_layouts?.[0]?.aisle_number || 'N/A';
 
     const newItem = {
@@ -169,11 +170,11 @@ export default function UnifiedShoppingPage() {
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-8 space-y-10 bg-[#FBFBFB] min-h-screen">
       
-      {/* 1. HEADER SECTION */}
+      {/* HEADER SECTION */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-4xl font-black text-[#263A29] tracking-tight">Daily Trip</h1>
-          <p className="text-gray-400 font-bold text-sm uppercase tracking-widest">Aisle-by-aisle navigation</p>
+          <h1 className="text-4xl font-black text-[#263A29] tracking-tight uppercase">Daily Trip</h1>
+          <p className="text-gray-400 font-bold text-sm uppercase tracking-widest">Store Navigation</p>
         </div>
         <div className="flex gap-3">
             <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-gray-100">
@@ -187,7 +188,7 @@ export default function UnifiedShoppingPage() {
         </div>
       </header>
 
-      {/* 2. SEARCH & QUICK ADD */}
+      {/* SEARCH SECTION */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-5 space-y-6">
           <div className="relative" ref={searchRef}>
@@ -197,7 +198,7 @@ export default function UnifiedShoppingPage() {
               onFocus={() => setShowSuggestions(true)}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search store catalog..."
-              className="w-full p-6 bg-white rounded-[30px] shadow-sm border-2 border-transparent focus:border-[#41644A] outline-none font-bold text-[#263A29] transition-all"
+              className="w-full p-6 bg-white rounded-[30px] shadow-sm border-2 border-transparent focus:border-[#41644A] outline-none font-bold text-[#263A29]"
             />
             
             {showSuggestions && suggestions.length > 0 && (
@@ -206,14 +207,19 @@ export default function UnifiedShoppingPage() {
                   <div key={p.productid} className="flex items-center justify-between p-5 hover:bg-gray-50 border-b border-gray-50 last:border-none">
                     <div className="flex-1">
                       <p className="font-bold text-sm text-[#263A29]">{p.productname}</p>
-                      <p className="text-[10px] font-black text-[#41644A] uppercase tracking-tighter">
-                        Aisle {p.store_layouts?.[0]?.aisle_number || 'N/A'}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-black bg-gray-100 px-2 py-1 rounded text-gray-500">AISLE {p.store_layouts?.[0]?.aisle_number || 'N/A'}</span>
+                        {p.totalStock > 0 ? (
+                           <span className="text-[9px] font-black text-green-600 uppercase">In Stock</span>
+                        ) : (
+                           <span className="text-[9px] font-black text-red-400 uppercase">Out of Stock</span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={() => toggleWishlist(p)} 
-                        className={`p-2 text-xl transition-transform active:scale-125 ${wishlist.some(w => w.productId === p.productid) ? 'text-yellow-400' : 'text-gray-200 hover:text-gray-400'}`}
+                        className={`p-2 text-xl ${wishlist.some(w => w.productId === p.productid) ? 'text-yellow-400' : 'text-gray-200 hover:text-gray-400'}`}
                       >
                         ★
                       </button>
@@ -230,19 +236,18 @@ export default function UnifiedShoppingPage() {
             )}
           </div>
 
-          {/* QUICK-ADD FROM WISHLIST */}
           <div className="bg-white p-6 rounded-[35px] border border-gray-100 shadow-sm">
             <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Quick Add from Watchlist</h3>
             <div className="space-y-3">
               {wishlist.length === 0 && <p className="text-sm text-gray-300 italic">No items being watched.</p>}
               {wishlist.map(item => (
-                <div key={item.productId} className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl group">
+                <div key={item.productId} className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl">
                   <span className="font-bold text-sm text-[#263A29]">{item.name}</span>
                   <div className="flex items-center gap-2">
                     {item.stock > 0 ? (
-                        <button onClick={() => addToDaily(item)} className="bg-green-600 text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase">Restocked! Add</button>
+                        <button onClick={() => addToDaily(item)} className="bg-green-600 text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-tighter">Restocked! Add</button>
                     ) : (
-                        <span className="text-[9px] font-black text-orange-400 uppercase bg-orange-50 px-2 py-1 rounded-lg">Out of stock</span>
+                        <span className="text-[9px] font-black text-orange-400 uppercase bg-orange-50 px-2 py-1 rounded-lg">Monitoring...</span>
                     )}
                   </div>
                 </div>
@@ -251,48 +256,43 @@ export default function UnifiedShoppingPage() {
           </div>
         </div>
 
-        {/* 3. THE MASTER LIST */}
+        {/* TRIP LIST SECTION */}
         <div className="lg:col-span-7 space-y-4">
           <div className="flex justify-between items-center px-4">
              <h2 className="font-black text-[#263A29] uppercase tracking-widest text-xs">Trip Overview</h2>
-             <button onClick={() => { if(confirm("Clear Trip?")) setDailyList([]); }} className="text-red-400 text-[10px] font-black uppercase hover:underline">Clear List</button>
+             <button onClick={() => { if(confirm("Clear Trip?")) setDailyList([]); }} className="text-red-400 text-[10px] font-black uppercase">Clear List</button>
           </div>
 
           {dailyList.length === 0 ? (
             <div className="h-64 flex flex-col items-center justify-center bg-gray-50 rounded-[40px] border-2 border-dashed border-gray-200">
-               <p className="text-gray-400 font-bold">Your shopping trip is empty</p>
-               <p className="text-gray-300 text-xs mt-1">Search or add from your watchlist above</p>
+               <p className="text-gray-400 font-bold">Your trip is empty</p>
             </div>
           ) : (
             dailyList.map(item => (
-              <div key={item.uid} className={`group flex items-center justify-between p-6 rounded-[30px] border-2 transition-all ${item.checked ? 'bg-gray-50 border-transparent opacity-60' : 'bg-white border-white shadow-sm hover:border-gray-100'}`}>
+              <div key={item.uid} className={`group flex items-center justify-between p-6 rounded-[30px] border-2 transition-all ${item.checked ? 'bg-gray-50 border-transparent opacity-60' : 'bg-white border-white shadow-sm'}`}>
                 <div className="flex items-center gap-5 flex-1">
-                  <div className="relative">
-                    <input 
-                        type="checkbox" 
-                        checked={item.checked} 
-                        onChange={() => setDailyList(dailyList.map(i => i.uid === item.uid ? {...i, checked: !i.checked} : i))}
-                        className="w-7 h-7 rounded-full border-2 border-gray-200 accent-[#41644A] cursor-pointer"
-                    />
-                  </div>
+                  <input 
+                      type="checkbox" 
+                      checked={item.checked} 
+                      onChange={() => setDailyList(dailyList.map(i => i.uid === item.uid ? {...i, checked: !i.checked} : i))}
+                      className="w-6 h-6 rounded-full accent-[#41644A]"
+                  />
                   <div>
                     <div className="flex items-center gap-2">
                         <h4 className={`text-lg font-black ${item.checked ? 'line-through text-gray-400' : 'text-[#263A29]'}`}>{item.name}</h4>
-                        {wishlist.find(w => w.productId === item.id)?.stock > 0 && (
-                            <span className="bg-green-100 text-green-700 text-[9px] font-black px-2 py-0.5 rounded-md uppercase animate-pulse">Ready to Pick</span>
+                        {wishlist.find(w => w.productId === item.id)?.stock > 0 && !item.checked && (
+                            <span className="bg-green-100 text-green-700 text-[9px] font-black px-2 py-0.5 rounded-md uppercase">Available</span>
                         )}
                     </div>
-                    <div className="flex items-center gap-3 mt-1">
-                        <span className="text-[10px] font-black bg-[#F7F9F7] text-[#41644A] px-3 py-1 rounded-full uppercase tracking-widest">📍 Aisle {item.aisle}</span>
-                    </div>
+                    <span className="text-[10px] font-black bg-gray-100 text-[#41644A] px-3 py-1 rounded-full uppercase">📍 Aisle {item.aisle}</span>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-4">
-                    <button onClick={() => toggleWishlist(item)} className={`text-xl transition-transform active:scale-125 ${wishlist.some(w => w.productId === item.id) ? 'text-yellow-400' : 'text-gray-100 hover:text-gray-300'}`}>
+                    <button onClick={() => toggleWishlist(item)} className={`text-xl ${wishlist.some(w => w.productId === item.id) ? 'text-yellow-400' : 'text-gray-100 hover:text-gray-300'}`}>
                         ★
                     </button>
-                    <button onClick={() => setDailyList(dailyList.filter(i => i.uid !== item.uid))} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-all font-bold p-2">✕</button>
+                    <button onClick={() => setDailyList(dailyList.filter(i => i.uid !== item.uid))} className="text-gray-300 hover:text-red-500 font-bold p-2">✕</button>
                 </div>
               </div>
             ))
